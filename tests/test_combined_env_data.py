@@ -235,6 +235,8 @@ class TestBasicStatistics:
                 pl.col("Lat").mean().alias("lat_mean"),
                 pl.col("Lon").mean().alias("lon_mean"),
                 pl.col("Alt_m").mean().alias("alt_mean_m"),
+                pl.col("Si").mean().alias("si_mean"),
+                pl.col("Si").std().alias("si_std"),
             ]).sort("Campaign")
             
             for row in stats.to_dicts():
@@ -245,6 +247,7 @@ class TestBasicStatistics:
                 f.write(f"  Lat (mean): {fmt_float(row['lat_mean'], '.2f')}°\n")
                 f.write(f"  Lon (mean): {fmt_float(row['lon_mean'], '.2f')}°\n")
                 f.write(f"  Alt (mean): {fmt_float(row['alt_mean_m'], '.0f')} m\n")
+                f.write(f"  Si (mean ± std): {fmt_float(row['si_mean'], '.4f')} ± {fmt_float(row['si_std'], '.4f')}\n")
                 f.write("\n")
         
         assert stats_file.exists(), "Statistics file was not created"
