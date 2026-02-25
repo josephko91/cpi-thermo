@@ -54,6 +54,9 @@ import pandas as pd
 
 COEF_TEMP = 0.01       # raw MMS-1HZ_T → Kelvin
 COEF_PRESSURE = 0.01   # raw MMS-1HZ_P → hPa
+COEF_LAT = 0.00001
+COEF_LON = 0.00001
+COEF_ALT = 0.1
 
 # Explicit ICARTT fill / sentinel values
 _MISSING_FLAGS: list[float] = [
@@ -314,9 +317,9 @@ def extract_posidon_standard(
     out["Si"] = df.get("Si", np.nan)
 
     # Position
-    out["Lat"]   = df.get("MMS-1HZ_G_LAT",  np.nan)
-    out["Lon"]   = df.get("MMS-1HZ_G_LONG", np.nan)
-    out["Alt_m"] = df.get("MMS-1HZ_G_ALT",  np.nan)
+    out["Lat"]   = df.get("MMS-1HZ_G_LAT",  np.nan) * COEF_LAT
+    out["Lon"]   = df.get("MMS-1HZ_G_LONG", np.nan) * COEF_LON
+    out["Alt_m"] = df.get("MMS-1HZ_G_ALT",  np.nan) * COEF_ALT
 
     out["Campaign"] = campaign
 
