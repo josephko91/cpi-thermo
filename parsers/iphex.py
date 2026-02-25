@@ -199,15 +199,18 @@ def load_iphex_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["STATIC_PR"] = _coerce_and_mask(df["STATIC_PR"])
 
     # Unit guards: convert Kelvin → Celsius if median looks Kelvin-range
-    med_t = np.nanmedian(df["Air_Temp"].to_numpy(dtype=float))
+    with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+        med_t = np.nanmedian(df["Air_Temp"].to_numpy(dtype=float))
     if np.isfinite(med_t) and med_t > 150:
         df["Air_Temp"] = df["Air_Temp"] - 273.15
-    med_fp = np.nanmedian(df["FrostPoint"].to_numpy(dtype=float))
+    with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+        med_fp = np.nanmedian(df["FrostPoint"].to_numpy(dtype=float))
     if np.isfinite(med_fp) and med_fp > 150:
         df["FrostPoint"] = df["FrostPoint"] - 273.15
 
     # Convert Pa → hPa if pressure looks like Pascals
-    med_p = np.nanmedian(df["STATIC_PR"].to_numpy(dtype=float))
+    with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+        med_p = np.nanmedian(df["STATIC_PR"].to_numpy(dtype=float))
     if np.isfinite(med_p) and 2000 < med_p < 120000:
         df["STATIC_PR"] = df["STATIC_PR"] / 100.0
 

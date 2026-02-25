@@ -184,7 +184,8 @@ def _apply_row_qc_filters(df: pd.DataFrame) -> pd.DataFrame:
 def _normalize_temperature_c(series: pd.Series) -> pd.Series:
     """Return temperature in Celsius from likely C or K input."""
     s = pd.to_numeric(series, errors="coerce")
-    med = np.nanmedian(s.to_numpy(dtype=float))
+    with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+        med = np.nanmedian(s.to_numpy(dtype=float))
     if np.isfinite(med) and med > 150:
         # Kelvin -> Celsius
         s = s - 273.15
@@ -208,7 +209,8 @@ def _normalize_altitude_m(series: pd.Series, col_name: str, metadata: Dict[str, 
         return s * 0.3048
 
     # Heuristic fallback: if median altitude is extremely high for meters but plausible feet.
-    med = np.nanmedian(s.to_numpy(dtype=float))
+    with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+        med = np.nanmedian(s.to_numpy(dtype=float))
     if np.isfinite(med) and 12000 <= med <= 70000:
         return s * 0.3048
 

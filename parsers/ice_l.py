@@ -116,7 +116,8 @@ def load_ice_l_file(filepath: Union[str, Path]) -> pd.DataFrame:
         rhum = _match_length(_to_float_1d(ds[rh_var].values), n)
 
         # Unit normalization: ATX is expected in Celsius for ICE-L.
-        med_t = np.nanmedian(tair_c)
+        with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+            med_t = np.nanmedian(tair_c)
         if np.isfinite(med_t) and med_t > 150:
             tair_c = tair_c - 273.15
 

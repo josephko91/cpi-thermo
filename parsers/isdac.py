@@ -199,13 +199,15 @@ def load_isdac_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # Physical-range filters
     # -------------------------------------------------------------------
     # Temperature: RSTem in °C; check for accidental Kelvin
-    med_t = np.nanmedian(df["RSTem"].to_numpy(dtype=float))
+    with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+        med_t = np.nanmedian(df["RSTem"].to_numpy(dtype=float))
     if np.isfinite(med_t) and med_t > 150:
         df["RSTem"] = df["RSTem"] - 273.15
     df.loc[(df["RSTem"] < -95) | (df["RSTem"] > 60), "RSTem"] = np.nan
 
     # Pressure: NPres in mb (= hPa); check for accidental Pa
-    med_p = np.nanmedian(df["NPres"].to_numpy(dtype=float))
+    with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+        med_p = np.nanmedian(df["NPres"].to_numpy(dtype=float))
     if np.isfinite(med_p) and 2000 < med_p < 120000:
         df["NPres"] = df["NPres"] / 100.0
     df.loc[(df["NPres"] < 50) | (df["NPres"] > 1100), "NPres"] = np.nan
@@ -217,7 +219,8 @@ def load_isdac_file(filepath: Union[str, Path]) -> pd.DataFrame:
     if "LicFro" in df.columns:
         fp_vals = df["LicFro"].to_numpy(dtype=float)
         if np.any(np.isfinite(fp_vals)):
-            med_fp = np.nanmedian(fp_vals)
+            with np.errstate(all='ignore'):  # Suppress warnings from nanmedian on all-NaN arrays
+                med_fp = np.nanmedian(fp_vals)
             if np.isfinite(med_fp) and med_fp > 150:
                 df["LicFro"] = df["LicFro"] - 273.15
         df.loc[(df["LicFro"] < -120) | (df["LicFro"] > 40), "LicFro"] = np.nan
