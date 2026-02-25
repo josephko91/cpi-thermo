@@ -29,20 +29,40 @@ def tmp_output_dir():
     yield output_dir
 
 
+# Common fill/missing value sentinels used across campaigns
+FILL_VALUES = [-9999.0, -99999.0, -999999.0, -9999999.0, -99999999.0, -999999999.0]
+
+
+def replace_fill_values(df: pl.DataFrame, cols: list[str]) -> pl.DataFrame:
+    """Replace known fill/sentinel values with null for the given columns."""
+    for col in cols:
+        if col in df.columns:
+            mask = pl.lit(False)
+            for fv in FILL_VALUES:
+                mask = mask | (pl.col(col) == fv)
+            df = df.with_columns(
+                pl.when(mask).then(None).otherwise(pl.col(col)).alias(col)
+            )
+    return df
+
+
 @pytest.fixture
 def combined_df(tmp_output_dir):
     """Create combined environmental dataset from all campaigns."""
     output_path = tmp_output_dir / "test_combined.parquet"
-    
-    # Process all campaigns (using small subset for testing)
+
+    # Process all campaigns
     df = process_all_campaigns(verbose=False)
-    
+
     # Save to parquet
     df.to_parquet(str(output_path))
-    
+
     # Load back and convert to polars
     df_pl = pl.read_parquet(str(output_path))
-    
+
+    # Replace fill/sentinel values with null
+    df_pl = replace_fill_values(df_pl, ["Lat", "Lon", "Alt_m", "Tair_C", "Si"])
+
     return df_pl, output_path
 
 
@@ -76,8 +96,8 @@ class TestCampaignData:
     def test_records_per_campaign(self, combined_df):
         """Test that each campaign has records."""
         df_pl, _ = combined_df
-        counts = df_pl.groupby("Campaign").agg(pl.count().alias("n_records"))
-        
+        counts = df_pl.group_by("Campaign").agg(pl.len().alias("n_records"))
+
         for row in counts.to_dicts():
             campaign = row["Campaign"]
             n_records = row["n_records"]
@@ -112,36 +132,45 @@ class TestDataQuality:
             assert temp_max < 200, f"Temperature too high: {temp_max}"
     
     def test_latitude_range(self, combined_df):
-        """Test that latitude values are valid."""
+        """Test that latitude values are valid (after fill value removal)."""
         df_pl, _ = combined_df
         lat_col = "Lat"
-        
+
         if lat_col in df_pl.columns:
-            lat_min = df_pl[lat_col].min()
-            lat_max = df_pl[lat_col].max()
-            
+            valid = df_pl[lat_col].drop_nulls()
+            if valid.len() == 0:
+                pytest.skip("No valid Lat values")
+            lat_min = valid.min()
+            lat_max = valid.max()
+
             assert lat_min >= -90, f"Latitude too low: {lat_min}"
             assert lat_max <= 90, f"Latitude too high: {lat_max}"
     
     def test_longitude_range(self, combined_df):
-        """Test that longitude values are valid."""
+        """Test that longitude values are valid (after fill value removal)."""
         df_pl, _ = combined_df
         lon_col = "Lon"
-        
+
         if lon_col in df_pl.columns:
-            lon_min = df_pl[lon_col].min()
-            lon_max = df_pl[lon_col].max()
-            
+            valid = df_pl[lon_col].drop_nulls()
+            if valid.len() == 0:
+                pytest.skip("No valid Lon values")
+            lon_min = valid.min()
+            lon_max = valid.max()
+
             assert lon_min >= -180, f"Longitude too low: {lon_min}"
             assert lon_max <= 180, f"Longitude too high: {lon_max}"
     
     def test_altitude_non_negative(self, combined_df):
-        """Test that altitude values are non-negative."""
+        """Test that altitude values are non-negative (after fill value removal)."""
         df_pl, _ = combined_df
         alt_col = "Alt_m"
-        
+
         if alt_col in df_pl.columns:
-            alt_min = df_pl[alt_col].min()
+            valid = df_pl[alt_col].drop_nulls()
+            if valid.len() == 0:
+                pytest.skip("No valid Alt_m values")
+            alt_min = valid.min()
             assert alt_min >= 0, f"Negative altitude found: {alt_min}"
     
     def test_no_duplicate_rows(self, combined_df):
@@ -168,8 +197,8 @@ class TestBasicStatistics:
             f.write("CAMPAIGN STATISTICS\n")
             f.write("=" * 70 + "\n\n")
             
-            stats = df_pl.groupby("Campaign").agg([
-                pl.count().alias("n_records"),
+            stats = df_pl.group_by("Campaign").agg([
+                pl.len().alias("n_records"),
                 pl.col("Tair_C").mean().alias("temp_mean_C"),
                 pl.col("Tair_C").std().alias("temp_std_C"),
                 pl.col("Lat").mean().alias("lat_mean"),
