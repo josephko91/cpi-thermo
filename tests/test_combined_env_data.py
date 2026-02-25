@@ -73,7 +73,7 @@ def replace_fill_values(df: pl.DataFrame, cols: list[str]) -> pl.DataFrame:
     return df
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def combined_df(tmp_output_dir):
     """Create combined environmental dataset from all campaigns."""
     output_path = tmp_output_dir / "test_combined.parquet"
