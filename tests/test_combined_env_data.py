@@ -7,6 +7,16 @@ Tests verify:
 - Campaign data presence
 - Data quality (nulls, ranges, duplicates)
 - Basic statistics per campaign
+
+How to run:
+- Run all tests
+pytest tests/test_combined_env_data.py -v
+- To run all tests in a class
+pytest tests/test_combined_env_data.py -k TestBasicStatistics -v
+- run specific test function
+pytest tests/test_combined_env_data.py -k test_statistics_per_campaign -v
+- to combine patterns
+pytest tests/test_combined_env_data.py -k "TestBasicStatistics and test_statistics_per_campaign" -v
 """
 
 import sys
