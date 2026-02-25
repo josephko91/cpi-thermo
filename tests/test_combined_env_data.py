@@ -11,7 +11,6 @@ Tests verify:
 
 import sys
 from pathlib import Path
-import tempfile
 
 import pytest
 import polars as pl
@@ -24,9 +23,10 @@ from main import process_all_campaigns, DEFAULT_CAMPAIGN_CONFIG
 
 @pytest.fixture
 def tmp_output_dir():
-    """Create temporary directory for test outputs."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+    """Create output directory for test outputs in tests/output/."""
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    yield output_dir
 
 
 @pytest.fixture
