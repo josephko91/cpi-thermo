@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from main import process_all_campaigns, DEFAULT_CAMPAIGN_CONFIG
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def tmp_output_dir():
     """Create output directory for test outputs in tests/output/."""
     output_dir = Path(__file__).parent / "output"
