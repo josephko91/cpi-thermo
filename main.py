@@ -409,33 +409,37 @@ def main():
             logging.StreamHandler()
         ]
     )
+    try:
+        # Determine campaigns to process
+        if args.all:
+            campaigns = None  # Will process all
+        elif args.campaigns:
+            campaigns = args.campaigns
+        else:
+            logging.error("Error: Specify --campaigns or --all")
+            sys.exit(1)
+        
+        # Load custom config if provided
+        config = None
+        if args.config:
+            config = load_campaign_config(args.config)
+        
+        # Process campaigns
+        df = process_all_campaigns(campaigns, config, verbose)
+        
+        # Print summary
+        if verbose:
+            print_summary(df)
+        
+        # Save output
+        if not args.dry_run:
+            save_output(df, args.output, verbose)
     
-    # Determine campaigns to process
-    if args.all:
-        campaigns = None  # Will process all
-    elif args.campaigns:
-        campaigns = args.campaigns
-    else:
-        logging.error("Error: Specify --campaigns or --all")
+        return df
+    
+    except Exception as e:
+        logging.error(f"Error occurred: {e}")
         sys.exit(1)
-    
-    # Load custom config if provided
-    config = None
-    if args.config:
-        config = load_campaign_config(args.config)
-    
-    # Process campaigns
-    df = process_all_campaigns(campaigns, config, verbose)
-    
-    # Print summary
-    if verbose:
-        print_summary(df)
-    
-    # Save output
-    if not args.dry_run:
-        save_output(df, args.output, verbose)
-    
-    return df
 
 
 if __name__ == "__main__":
