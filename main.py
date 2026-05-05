@@ -289,7 +289,6 @@ def save_output(
     if verbose:
         print(f"Saved to: {output_path}")
 
-
 # =============================================================================
 # Summary Statistics
 # =============================================================================
@@ -321,7 +320,6 @@ def print_summary(df: pd.DataFrame) -> None:
     for col in df.columns:
         if missing[col] > 0:
             print(f"  {col}: {missing[col]:,} ({missing_pct[col]:.2f}%)")
-
 
 # =============================================================================
 # CLI Interface
