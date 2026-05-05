@@ -3,6 +3,17 @@ from pathlib import Path
 
 import pytest
 import pandas as pd
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("logs/test_attrex.log"),
+        logging.StreamHandler()
+    ]
+)
 
 from parsers.attrex import load_attrex, extract_attrex_standard
 
@@ -44,5 +55,7 @@ def test_extract_attrex_standard():
 
 if __name__ == "__main__":
     import sys
+    logging.info("Starting ATTREX tests")
     errno = pytest.main([__file__])
+    logging.info("ATTREX tests completed")
     sys.exit(errno)

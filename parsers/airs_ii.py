@@ -29,7 +29,7 @@ def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
     """
     filepath = Path(filepath)
     
-    # Use CFDatetimeCoder for proper time decoding
+    # Use xarray's default netCDF backend.
     ds = xr.open_dataset(filepath, decode_times=True, decode_timedelta=True)
     
     try:

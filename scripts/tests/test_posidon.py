@@ -3,6 +3,17 @@ from pathlib import Path
 
 import pytest
 import pandas as pd
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("logs/test_posidon.log"),
+        logging.StreamHandler()
+    ]
+)
 
 from parsers.posidon import load_posidon, extract_posidon_standard
 
@@ -45,5 +56,7 @@ def test_extract_posidon_standard():
 
 if __name__ == "__main__":
     import sys
+    logging.info("Starting POSIDON tests")
     errno = pytest.main([__file__])
+    logging.info("POSIDON tests completed")
     sys.exit(errno)

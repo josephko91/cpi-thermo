@@ -228,6 +228,7 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
         df["datetime_utc"] = flight_date + pd.to_timedelta(elapsed, unit="s")
     else:
         df["datetime_utc"] = pd.NaT
+    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").astype("datetime64[ns, UTC]")
 
     # --- rename data columns with instrument prefix so they survive merging ---
     prefix = instrument  # e.g. "DLH-H2O", "MMS-MetData"

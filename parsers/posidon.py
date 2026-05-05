@@ -145,6 +145,7 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
     df["datetime_utc"] = flight_date + pd.to_timedelta(
         df[time_col].astype(float), unit="s"
     )
+    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").astype("datetime64[ns, UTC]")
 
     # --- Prefix data columns with instrument stem ---
     file_prefix = filepath.stem.split("_")[0]
@@ -188,6 +189,7 @@ def _combine_ict_files(
     for prefix, df_list in instrument_dfs.items():
         merged_instruments[prefix] = (
             pd.concat(df_list, ignore_index=True)
+            .assign(datetime_utc=lambda frame: pd.to_datetime(frame["datetime_utc"], utc=True, errors="coerce").astype("datetime64[ns, UTC]"))
             .sort_values("datetime_utc")
             .reset_index(drop=True)
         )

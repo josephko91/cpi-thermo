@@ -114,6 +114,11 @@ def si_from_rh(rh_percent: np.ndarray) -> np.ndarray:
     return np.asarray(rh_percent) / 100.0 - 1.0
 
 
+def normalize_datetime_utc(values: pd.Series) -> pd.Series:
+    """Normalize datetime values to UTC nanosecond precision."""
+    return pd.to_datetime(values, utc=True, errors="coerce").astype("datetime64[ns, UTC]")
+
+
 # =============================================================================
 # Column Name Utilities
 # =============================================================================

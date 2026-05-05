@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Union, Dict, List, Optional
 from collections import defaultdict
 
-from .utils import si_from_ppmv
+from .utils import normalize_datetime_utc, si_from_ppmv
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +171,7 @@ def _parse_ict_file(
     else:
         # Use the first column as seconds-of-day
         df["datetime_utc"] = flight_date + pd.to_timedelta(df.iloc[:, 0], unit="s")
+    df["datetime_utc"] = normalize_datetime_utc(df["datetime_utc"])
 
     # --- optionally prefix data columns (not datetime_utc) ---
     if prefix:
@@ -229,6 +230,7 @@ def _combine_ict_files(
                 print(f"  Warning: Could not parse {fp.name} ({inst}): {e}")
         if parsed:
             combined = pd.concat(parsed, ignore_index=True)
+            combined["datetime_utc"] = normalize_datetime_utc(combined["datetime_utc"])
             combined.sort_values("datetime_utc", inplace=True)
             combined.reset_index(drop=True, inplace=True)
             instrument_dfs[inst] = combined

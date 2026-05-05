@@ -3,6 +3,17 @@ from pathlib import Path
 
 import pytest
 import pandas as pd
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("logs/test_macpex.log"),
+        logging.StreamHandler()
+    ]
+)
 
 from parsers.macpex import load_macpex, extract_macpex_standard
 
@@ -45,5 +56,7 @@ def test_extract_macpex_standard():
 
 if __name__ == "__main__":
     import sys
+    logging.info("Starting MACPEX tests")
     errno = pytest.main([__file__])
+    logging.info("MACPEX tests completed")
     sys.exit(errno)
