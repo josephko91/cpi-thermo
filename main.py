@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import pandas as pd
 import yaml
+import logging
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -177,9 +178,9 @@ def process_campaign(
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
     
     if verbose:
-        print(f"Processing {campaign_name}...")
-        print(f"  Data path: {data_dir}")
-        print(f"  Pattern: {pattern}")
+        logging.info(f"Processing {campaign_name}...")
+        logging.info(f"  Data path: {data_dir}")
+        logging.info(f"  Pattern: {pattern}")
     
     # Get loader function
     loader = CAMPAIGN_LOADERS.get(campaign_name)
@@ -190,7 +191,7 @@ def process_campaign(
     df_raw = loader(data_dir, pattern)
     
     if verbose:
-        print(f"  Loaded {len(df_raw):,} records")
+        logging.info(f"  Loaded {len(df_raw):,} records")
     
     # Extract standardized columns
     extractor = config.get("extractor")
@@ -214,7 +215,7 @@ def process_campaign(
     
     if verbose:
         n_valid = df_std[["Timestamp", "Tair_C", "Si"]].notna().all(axis=1).sum()
-        print(f"  Valid records (with Timestamp, Tair_C, Si): {n_valid:,}")
+        logging.info(f"  Valid records (with Timestamp, Tair_C, Si): {n_valid:,}")
     
     return df_std
 
@@ -255,7 +256,7 @@ def process_all_campaigns(
             df = process_campaign(campaign, campaign_config, verbose)
             all_dfs.append(df)
         except Exception as e:
-            print(f"Error processing {campaign}: {e}")
+            logging.error(f"Error processing {campaign}: {e}")
             continue
     
     if not all_dfs:
@@ -264,8 +265,8 @@ def process_all_campaigns(
     combined = pd.concat(all_dfs, ignore_index=True)
     
     if verbose:
-        print(f"\nCombined dataset: {len(combined):,} total records")
-        print(f"Campaigns: {combined['Campaign'].unique().tolist()}")
+        logging.info(f"\nCombined dataset: {len(combined):,} total records")
+        logging.info(f"Campaigns: {combined['Campaign'].unique().tolist()}")
     
     return combined
 
@@ -287,7 +288,7 @@ def save_output(
         raise ValueError(f"Unsupported output format: {output_path.suffix}")
     
     if verbose:
-        print(f"Saved to: {output_path}")
+        logging.info(f"Saved to: {output_path}")
 
 # =============================================================================
 # Summary Statistics
@@ -295,9 +296,9 @@ def save_output(
 
 def print_summary(df: pd.DataFrame) -> None:
     """Print summary statistics for the combined dataset."""
-    print("\n" + "=" * 60)
-    print("SUMMARY STATISTICS")
-    print("=" * 60)
+    logging.info("\n" + "=" * 60)
+    logging.info("SUMMARY STATISTICS")
+    logging.info("=" * 60)
     
     # Per-campaign summary
     summary = df.groupby("Campaign").agg(
@@ -310,16 +311,16 @@ def print_summary(df: pd.DataFrame) -> None:
         si_std=("Si", "std"),
     )
     
-    print("\nPer-campaign statistics:")
-    print(summary.to_string())
+    logging.info("\nPer-campaign statistics:")
+    logging.info(summary.to_string())
     
     # Missing data summary
-    print("\nMissing data per column:")
+    logging.info("\nMissing data per column:")
     missing = df.isnull().sum()
     missing_pct = (missing / len(df) * 100).round(2)
     for col in df.columns:
         if missing[col] > 0:
-            print(f"  {col}: {missing[col]:,} ({missing_pct[col]:.2f}%)")
+            logging.info(f"  {col}: {missing[col]:,} ({missing_pct[col]:.2f}%)")
 
 # =============================================================================
 # CLI Interface
@@ -373,6 +374,13 @@ Examples:
     )
     
     parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=Path("output.log"),
+        help="Path to log file (default: output.log)",
+    )
+    
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Process data without saving",
@@ -392,13 +400,23 @@ def main():
     args = parse_args()
     verbose = not args.quiet
     
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(args.log_file),
+            logging.StreamHandler()
+        ]
+    )
+    
     # Determine campaigns to process
     if args.all:
         campaigns = None  # Will process all
     elif args.campaigns:
         campaigns = args.campaigns
     else:
-        print("Error: Specify --campaigns or --all")
+        logging.error("Error: Specify --campaigns or --all")
         sys.exit(1)
     
     # Load custom config if provided
