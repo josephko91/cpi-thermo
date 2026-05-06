@@ -342,6 +342,32 @@ def load_attrex(
         if p_fallback:
             df["P"] = df[p_fallback]
 
+    # --- scale MMS latitude and longitude (× 0.00001) ---
+    mms_lat_col = next(
+        (c for c in df.columns if "MMS" in c.upper() and "G_LAT" in c.upper()),
+        None,
+    )
+    mms_lon_col = next(
+        (c for c in df.columns if "MMS" in c.upper() and "G_LONG" in c.upper()),
+        None,
+    )
+
+    if mms_lat_col is not None:
+        df["Lat"] = df[mms_lat_col] * 0.00001
+        print(f"  Scaled Lat: {mms_lat_col} × 0.00001  (sample median raw = {df[mms_lat_col].median():.0f})")
+    else:
+        lat_fallback = next((c for c in df.columns if "lat" in c.lower()), None)
+        if lat_fallback:
+            df["Lat"] = df[lat_fallback]
+
+    if mms_lon_col is not None:
+        df["Lon"] = df[mms_lon_col] * 0.00001
+        print(f"  Scaled Lon: {mms_lon_col} × 0.00001  (sample median raw = {df[mms_lon_col].median():.0f})")
+    else:
+        lon_fallback = next((c for c in df.columns if "lon" in c.lower()), None)
+        if lon_fallback:
+            df["Lon"] = df[lon_fallback]
+
     # --- sanitize T and P: set physically impossible values to NaN ---
     # ATTREX flies near the tropical tropopause (~15-19 km altitude).
     # Physically reasonable ranges:
@@ -453,9 +479,10 @@ def extract_attrex_standard(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Standardized data with Timestamp, Tair_C, Si, Lat, Lon, Alt_m, Campaign.
     """
-    # Find position columns (may be prefixed with instrument name)
-    lat_col = next((c for c in df.columns if "lat" in c.lower()), None)
-    lon_col = next((c for c in df.columns if "lon" in c.lower()), None)
+    # Find position columns: prefer scaled versions (Lat, Lon) created during load,
+    # then fall back to raw prefixed columns
+    lat_col = "Lat" if "Lat" in df.columns else next((c for c in df.columns if "lat" in c.lower()), None)
+    lon_col = "Lon" if "Lon" in df.columns else next((c for c in df.columns if "lon" in c.lower()), None)
     alt_col = next((c for c in df.columns if "alt" in c.lower()), None)
 
     # Consolidate source_file columns
