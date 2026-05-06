@@ -11,10 +11,10 @@ Tests verify:
 How to run:
 - Run all tests
 pytest tests/test_combined_env_data.py -v
-- Run and save stdout + print to terimnal
-pytest tests/test_combined_env_data.py -v | tee tests/output/pytest_output.txt
-- Run and save stdout & stderr + print to terminal
-pytest tests/test_combined_env_data.py -v 2>&1 | tee tests/output/pytest_output.txt
+- Run with terminal output only (default)
+pytest tests/test_combined_env_data.py -v
+- Run and save combined output/errors to one file
+pytest tests/test_combined_env_data.py -v --test-log-file tests/output/pytest_output.txt
 - To run all tests in a class
 pytest tests/test_combined_env_data.py -k TestBasicStatistics -v
 - run specific test function
