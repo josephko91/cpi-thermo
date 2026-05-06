@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 data/
 scripts/tests/output/
+logs/
 
 # C extensions
 *.so
