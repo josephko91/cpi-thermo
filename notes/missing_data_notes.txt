@@ -1,0 +1,20 @@
+Notes on missing data 
+5/6/26
+
+ATTREX 
+- Lat (incorrect)
+- Lon (N/A)
+
+CRYSTAL-FACE-NASA
+- Lat, Lon, Alt (N/A)
+
+CRYSTAL-FACE-UND
+- Lat, Lon, Alt (N/A)
+
+MACPEX
+- Lat, Lon, Alt (N/A)
+
+MIDCIX
+- Lat, Lon, Alt (N/A)
+
+--> 5 campaigns with missing or incorrect variable names
