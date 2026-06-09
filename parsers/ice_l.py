@@ -4,6 +4,12 @@ ICE-L (Ice in Clouds Experiment - Layer clouds) campaign data parser.
 Campaign: ICE-L
 Data Format: RAF Nimbus NetCDF files (.nc)
 
+- Source: NASA EOL (https://data.eol.ucar.edu/master_lists/generated/ice-l/)
+
+Data notes: 
+- all data saved initially on local machine (my laptop)
+- with the exception of SID data which has been saved on xcite for size reasons
+
 Notebook-validated variable mapping
 ----------------------------------
 - Temperature: ATX

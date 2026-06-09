@@ -2,6 +2,13 @@
 IPHEX (Integrated Precipitation and Hydrology Experiment) campaign data parser.
 
 Campaign: IPHEX
+
+Data notes:
+- NASA Earthdata: 
+    - https://doi.org/10.5067/GPMGV/IPHEX/MULTIPLE/DATA201
+    - https://doi.org/10.5067/GPMGV/IPHEX/NAV/DATA/001
+- UND Citation, Microphysics + Navigation
+
 Data Format: Whitespace-delimited text files with .iphex extension.
   - Column header line starts with 'Time' and contains 'Air_Temp'.
   - One units line follows the header; data starts on the line after that.

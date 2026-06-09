@@ -7,6 +7,7 @@ Data Format: NASA ICARTT-like CSV text (.ict)
 
 Notes
 -----
+- Source: NCAR EOL (https://data.eol.ucar.edu/dataset/list?project=619&children=project)
 - Data files can contain repeated pseudo-headers; parser selects the most likely
   data header (with `Time_Start` and many comma-separated columns).
 - Ice supersaturation (Si) is computed from dew point and ambient temperature

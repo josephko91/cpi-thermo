@@ -3,7 +3,9 @@ CRYSTAL-FACE UND (Citation aircraft) campaign data parser.
 
 Campaign: CRYSTAL-FACE UND Citation aircraft
 Data Source: https://espoarchive.nasa.gov/archive/browse/crystalf/Citation
-Data Format: ND* files (MIS.CIT humidity data, MET.CIT meteorology data)
+Data Format: 
+    - ND* files (MIS.CIT humidity data, MET.CIT meteorology data)
+    - 
 """
 
 import pandas as pd

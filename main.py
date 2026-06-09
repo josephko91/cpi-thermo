@@ -188,7 +188,7 @@ def process_campaign(
         raise ValueError(f"No loader found for campaign: {campaign_name}")
     
     # Load raw data
-    df_raw = loader(data_dir, pattern)
+    df_raw = loader(data_dir, pattern=pattern)
     
     if verbose:
         logging.info(f"  Loaded {len(df_raw):,} records")

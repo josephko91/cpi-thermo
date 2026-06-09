@@ -4,8 +4,11 @@ CRYSTAL-FACE NASA (WB-57) campaign data parser.
 Campaign: CRYSTAL-FACE NASA WB-57 aircraft
 Data Source: https://espoarchive.nasa.gov/archive/browse/crystalf/WB57
 Data Formats:
-  - JPL Laser Hygrometer (JLH) data
-  - Meteorological Measurement System (MMS) data with geolocation (LAT, LONG, ALT)
+    - Water Vapor
+        - JPL Laser Hygrometer (JLH) data (only ~16% coverage for water vapor)
+        - ALIAS (Airborne Laser Absorption Spectrometer) data 
+        - HW (Harvard Water Vapor) data (5 second intervals)
+    - Meteorological Measurement System (MMS) data with geolocation (LAT, LONG, ALT)
 """
 
 import pandas as pd
@@ -19,6 +22,10 @@ from .utils import (
     extract_takeoff_date,
     si_from_rh,
 )
+
+
+def _round_timestamp_to_second(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series, utc=True, errors="coerce").dt.round("s")
 
 
 def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -45,21 +52,33 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     with open(filepath) as f:
         lines = f.readlines()
     
-    # Parse header
-    n_header = int(lines[0].split()[0])
-    
     # Extract takeoff date from header
-    takeoff_date = extract_takeoff_date(lines[:n_header])
-    
-    # Parse scale factors (typically line 4)
-    # Remove comments and parse only numeric values
-    scale_line = lines[4].split(";")[0].split()
-    scales = [float(s) for s in scale_line if s.strip()]
-    
-    # Parse missing value indicators (typically line 5)
-    # Remove comments and parse only numeric values
-    missing_line = lines[5].split(";")[0].split()
-    missing_vals = [float(m) for m in missing_line if m.strip()]
+    takeoff_date = extract_takeoff_date(lines)
+
+    # Parse scale factors and missing values from the labeled header lines.
+    scale_line = next((line for line in lines if "scale factors" in line.lower()), None)
+    missing_line = next((line for line in lines if "missing values" in line.lower()), None)
+    if scale_line is None or missing_line is None:
+        raise ValueError(f"Could not locate scale/missing value lines in {filepath.name}")
+
+    scales = [float(s) for s in scale_line.split(";")[0].split()]
+    missing_vals = [float(m) for m in missing_line.split(";")[0].split()]
+
+    # Find the line that declares the actual data columns.
+    data_header_idx = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.strip().startswith("UT")
+            and "P_ALT" in line
+            and "LAT" in line
+            and "LONG" in line
+            and "TAS" in line
+        ),
+        None,
+    )
+    if data_header_idx is None:
+        raise ValueError(f"Could not locate MMS data header in {filepath.name}")
     
     # Column names for MMS data
     columns = ["UT", "P_ALT", "LAT", "LONG", "TAS"]
@@ -68,7 +87,7 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df = pd.read_csv(
         filepath,
         sep=r"\s+",
-        skiprows=n_header,
+        skiprows=data_header_idx + 1,
         names=columns,
     )
     
@@ -90,7 +109,9 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["Timestamp"] = df["UT"].apply(
         lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
     )
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    # record source filename for MMS rows
+    df["source_file"] = filepath.name
     
     # Rename columns to standard names
     df.rename(columns={
@@ -147,7 +168,7 @@ def load_crystal_face_nasa_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["Timestamp"] = df[ut_col].apply(
         lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
     )
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
     
     # Calculate Si from RH (relative humidity w.r.t. ice)
     # JLH files typically have RH or %RH column
@@ -200,7 +221,7 @@ def load_crystal_face_nasa(
     mms_dir = Path(mms_dir)
     
     if mms_dir.exists():
-        mms_files = [f for f in mms_dir.glob("*") if f.is_file()]
+        mms_files = [f for f in mms_dir.glob("*.WB57") if f.is_file()]
         if mms_files:
             mms_dfs = []
             for f in sorted(mms_files):
@@ -230,6 +251,24 @@ def load_crystal_face_nasa(
             direction="nearest",
             tolerance=pd.Timedelta(seconds=10),
         )
+
+        # Also include MMS-only rows as standalone entries so MMS timestamps
+        # appear in the standardized output (MMS provides geolocation only).
+        # Create a minimal standardized MMS DataFrame and concat with combined.
+        mms_std = mms_geo.copy()
+        # ensure standardized env columns exist
+        mms_std["Tair_C"] = np.nan
+        mms_std["Si"] = np.nan
+        # keep Lat/Lon/Alt_m from MMS; ensure source_file exists
+        if "source_file" not in mms_std.columns:
+            mms_std["source_file"] = "MMS"
+        mms_std["Campaign"] = "CRYSTAL-FACE-NASA"
+
+        # Concatenate JLH-derived combined rows with MMS-only rows, sort by time
+        combined = pd.concat([combined, mms_std], ignore_index=True, sort=False)
+        combined = combined.sort_values("Timestamp").reset_index(drop=True)
+
+    combined["Timestamp"] = _round_timestamp_to_second(combined["Timestamp"])
     
     combined["Campaign"] = "CRYSTAL-FACE-NASA"
     
@@ -268,5 +307,7 @@ def extract_crystal_face_nasa_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Campaign": df.get("Campaign", "CRYSTAL-FACE-NASA"),
         "source_file": df.get("source_file", ""),
     })
+
+    result["Timestamp"] = _round_timestamp_to_second(result["Timestamp"])
     
     return result
