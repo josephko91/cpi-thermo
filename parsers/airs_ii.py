@@ -2,8 +2,19 @@
 AIRS-II (Alliance Icing Research Study II) campaign data parser.
 
 Campaign: AIRS-II
-Data Source: https://data.eol.ucar.edu/project/AIRS-II
-Data Format: NetCDF files with LRT (Low-Rate) flight-level data
+- Data Source: https://data.eol.ucar.edu/project/AIRS-II
+- Data Format: NetCDF files with LRT (Low-Rate) flight-level data
+- Variables: relative humidity (RHUM), air temperature (ATX), LAT, LON, ALT
+- Derived: Si (from RHUM)
+- Notes:
+    - ATX = RAF best-estimate ambient temperature, derived from ATWH (Raw heated Rosemount air temperature) for AIRS-II
+    - Relative humidity was derived from the RAF best-estimate air temperature (ATX) and primary chilled-mirror dewpoint measurement (DPXC)
+    - Relative humidity (RHUM) was derived primarily from the DPBC chilled-mirror dew point sensor (reported as DPXC), which was selected as the reference humidity measurement for most flights.
+    - Two collocated dew point sensors were used: DPTC (faster response but limited dynamic range) and DPBC (slower response but capable of measuring larger dew point depressions).
+    - The sensors generally showed good agreement and correlation when operating normally.
+    - The primary data-quality issue was water ingestion during flight, which occasionally caused sensor drift.
+    - Humidity measurements were evaluated flight-by-flight, and the best-performing dew point sensor was selected when necessary.
+    - Overall, the campaign reported good-quality humidity measurements, with occasional degradation during periods affected by water ingestion.
 """
 
 import pandas as pd

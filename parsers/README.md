@@ -30,7 +30,8 @@ This folder contains Python modules for parsing and standardizing environmental 
   - Environmental and positional measurements.
 
 - **AIRS-II:**
-  - [NASA ESPO Archive](https://espoarchive.nasa.gov/archive/browse/airs_ii)
+  - [NCAR EOL Archive](https://data.eol.ucar.edu/project/AIRS-II)
+  - [Documentation](https://archive.eol.ucar.edu/raf/Projects/AIRS-II/)
   - netCDF files (`*.nc`).
 
 - **ATTREX:**

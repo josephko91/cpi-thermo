@@ -2,8 +2,13 @@
 ARM (Atmospheric Radiation Measurement) campaign data parser.
 
 Campaign: SGP 2000 Spring Cloud Campaign
-Data Source: https://www.arm.gov/research/campaigns/sgp2000sprcloud
-Data Format: Binary .t4archive.gz files (big-endian int32)
+- Data Source: https://iop.arm.gov/2000/sgp/cloud
+- Campaign website: https://www.arm.gov/research/campaigns/sgp2000sprcloud
+    - in "poellot-citation/t4" subdirectory
+- Data Format: Binary .t4archive.gz files (big-endian int32)
+- Variables: Date, Time_sec, Air_Temp_Rosemount_C, Frost_Point_Cryo_C, GPS_Lat_deg, GPS_Lon_deg, GPS_Alt_m
+- Derived: Si (ice supersaturation)
+- Notes: 
 """
 
 import gzip
