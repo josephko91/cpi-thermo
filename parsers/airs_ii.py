@@ -15,6 +15,7 @@ Campaign: AIRS-II
     - The primary data-quality issue was water ingestion during flight, which occasionally caused sensor drift.
     - Humidity measurements were evaluated flight-by-flight, and the best-performing dew point sensor was selected when necessary.
     - Overall, the campaign reported good-quality humidity measurements, with occasional degradation during periods affected by water ingestion.
+    - SpectraSensors TDL hygrometers used but only voltages provided in data. So these data were not used in this dataset.  
 """
 
 import pandas as pd

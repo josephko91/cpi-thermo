@@ -186,9 +186,15 @@ def process_campaign(
     loader = CAMPAIGN_LOADERS.get(campaign_name)
     if loader is None:
         raise ValueError(f"No loader found for campaign: {campaign_name}")
-    
+
+    # Pass campaign-specific extra kwargs from config (e.g. h2o_ranking for ATTREX)
+    extra_kwargs = {}
+    for key in ("h2o_ranking",):
+        if key in config:
+            extra_kwargs[key] = config[key]
+
     # Load raw data
-    df_raw = loader(data_dir, pattern=pattern)
+    df_raw = loader(data_dir, pattern=pattern, **extra_kwargs)
     
     if verbose:
         logging.info(f"  Loaded {len(df_raw):,} records")

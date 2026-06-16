@@ -5,6 +5,8 @@ Campaign: CRYSTAL-FACE UND Citation aircraft
 Data Source: https://espoarchive.nasa.gov/archive/browse/crystalf/Citation
 Data Format: 
     - ND* files (MIS.CIT humidity data, MET.CIT meteorology data)
+    - frost/dew point from both chilled mirror and laser hygrometer 
+    - unclear which laser hygrometer was used for UND flights (potentially JLH?)
     - 
 """
 

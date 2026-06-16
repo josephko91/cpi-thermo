@@ -2,21 +2,25 @@
 ATTREX (Airborne Tropical TRopopause EXperiment) campaign data parser.
 
 Campaign: ATTREX Global Hawk aircraft
-Data Source: https://espoarchive.nasa.gov/archive/browse/attrex/id4/GHawk
-Data Format: NASA ICARTT (.ict) files
-
-Water vapor instruments: NOAA-H2O, DLH (Diode Laser Hygrometer)
-Meteorological data: MMS (Meteorological Measurement System)
+- Data Source: https://espoarchive.nasa.gov/archive/browse/attrex/id4/GHawk
+- Data Format: NASA ICARTT (.ict) files
+- Water vapor instruments: DLH-H2O, NOAA-H2O, UCATS-H2O
+- Meteorological data: MMS (Meteorological Measurement System)
 
 Notes
 -----
 ATTREX data is split across multiple instruments in separate .ict files.
 Temperature and pressure come from the MMS instrument, while water vapor
-comes from DLH-H2O and/or NOAA-H2O. These must be merged across instruments
-(via merge_asof on datetime_utc) before Si can be computed.
+comes from DLH-H2O, NOAA-H2O, and/or UCATS-H2O. These must be merged
+across instruments (via merge_asof on datetime_utc) before Si can be
+computed.
 
 MMS raw values for temperature and pressure are scaled by 0.01
 (i.e., stored as integers; multiply by 0.01 to get Kelvin / hPa).
+
+Per-instrument Si columns: Si_DLH, Si_NOAA, Si_UCATS.
+Si_best is the first non-NaN value from the instrument ranking defined in
+config.yaml (attrex.h2o_ranking). Default order: DLH > NOAA > UCATS.
 """
 
 import pandas as pd
@@ -35,13 +39,26 @@ ATTREX_TIME_COLS: Dict[str, str] = {
     "DLH-H2O": "Time_UTC",
     "NOAA-H2O": "NW_UTC_s",
     "MMS": "TIME_UTC",
+    "UCATS-H2O": "Start_UTC",
 }
 
 # Fallback patterns (checked in order) when the canonical name is missing
 _TIME_FALLBACKS = ["Time_Start", "Time_Mid", "time"]
 
 # Missing value flags used across ATTREX .ict files
-ATTREX_MISSING_FLAGS = [-9999, -9999.99, -7777, -7777.77, -8888, -8888.88]
+# -99999 is used by UCATS-H2O; -9999 variants by DLH/NOAA/MMS
+ATTREX_MISSING_FLAGS = [-99999, -99999.0, -9999, -9999.99, -7777, -7777.77, -8888, -8888.88]
+
+# Default H2O instrument ranking for Si_best (overridden via config.yaml attrex.h2o_ranking)
+_DEFAULT_H2O_RANKING: List[str] = ["DLH", "NOAA", "UCATS"]
+
+# Maps ranking key → (column-detection predicate label, detection logic)
+# Detection is done at runtime against the merged DataFrame's column list.
+_H2O_INSTRUMENT_KEYS = {
+    "DLH": "dlh",
+    "NOAA": "noaa",
+    "UCATS": "ucats",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -267,16 +284,18 @@ def _combine_ict_files(
 def load_attrex(
     data_dir: Union[str, Path],
     pattern: str = "*.ict",
+    h2o_ranking: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
     Load all ATTREX ICT files, merge across instruments, and compute Si.
 
     The function:
     1. Recursively finds all ``.ict`` files under *data_dir*.
-    2. Groups them by instrument (DLH-H2O, NOAA-H2O, MMS, …).
+    2. Groups them by instrument (DLH-H2O, NOAA-H2O, UCATS-H2O, MMS, …).
     3. Merges across instruments via ``merge_asof`` on ``datetime_utc``.
     4. Applies MMS scaling (× 0.01 for temperature and pressure).
-    5. Computes Si from water-vapor mixing ratio, temperature, and pressure.
+    5. Computes per-instrument Si columns: Si_DLH, Si_NOAA, Si_UCATS.
+    6. Fills Si_best from the first available instrument in *h2o_ranking*.
 
     Parameters
     ----------
@@ -284,11 +303,15 @@ def load_attrex(
         Root directory containing ATTREX instrument sub-folders.
     pattern : str, optional
         Glob pattern for matching files (default: ``"*.ict"``).
+    h2o_ranking : list of str, optional
+        Ordered list of instrument keys for Si_best selection.
+        Keys: ``"DLH"``, ``"NOAA"``, ``"UCATS"``.
+        Defaults to ``_DEFAULT_H2O_RANKING`` (DLH > NOAA > UCATS).
 
     Returns
     -------
     pd.DataFrame
-        Combined data from all instruments with ``Si``, ``T_C``, ``Timestamp``.
+        Combined data with Si_DLH, Si_NOAA, Si_UCATS, Si_best, T_C, Timestamp.
     """
     data_dir = Path(data_dir)
     files = list(data_dir.rglob(pattern))
@@ -387,15 +410,23 @@ def load_attrex(
             print(f"  Masking {n_bad_p:,} invalid P values (outside 0–1100 hPa)")
             df.loc[invalid_p, "P"] = np.nan
 
-    # --- find water vapor column(s) ---
-    # Prefer DLH, fall back to NOAA
-    h2o_cols = [c for c in df.columns if "h2o" in c.lower() and "ppm" in c.lower()]
-    dlh_h2o = next((c for c in h2o_cols if "dlh" in c.lower()), None)
-    noaa_h2o = next((c for c in h2o_cols if "noaa" in c.lower() or "nw" in c.lower()), None)
-    h2o_col = dlh_h2o or noaa_h2o or (h2o_cols[0] if h2o_cols else None)
+    # --- detect per-instrument water vapor columns ---
+    # DLH: prefixed column with "dlh" and "ppm" (e.g. DLH-H2O_H2O_ppmv)
+    h2o_ppm_cols = [c for c in df.columns if "h2o" in c.lower() and "ppm" in c.lower()]
+    dlh_h2o = next((c for c in h2o_ppm_cols if "dlh" in c.lower()), None)
+    # NOAA: prefixed column with "noaa" or "nw_wv" and "ppm" (e.g. NOAA-H2O_NW_WV_H2O_ppm)
+    noaa_h2o = next((c for c in h2o_ppm_cols if "noaa" in c.lower() or "nw_wv" in c.lower()), None)
+    # UCATS: prefixed column with "ucats" and "uwv" (e.g. UCATS-H2O_H2O_UWV)
+    ucats_h2o = next(
+        (c for c in df.columns if "ucats" in c.lower() and "uwv" in c.lower()),
+        None,
+    )
 
-    # Sanitize H2O: water vapor mixing ratio must be > 0
-    for wv_col in [dlh_h2o, noaa_h2o]:
+    # Map instrument key → raw H2O column
+    _inst_h2o_cols = {"DLH": dlh_h2o, "NOAA": noaa_h2o, "UCATS": ucats_h2o}
+
+    # Sanitize H2O: mixing ratio must be > 0
+    for inst_key, wv_col in _inst_h2o_cols.items():
         if wv_col and wv_col in df.columns:
             invalid_wv = (df[wv_col] <= 0) | df[wv_col].isna()
             n_bad_wv = invalid_wv.sum()
@@ -403,54 +434,65 @@ def load_attrex(
                 print(f"  Masking {n_bad_wv:,} invalid {wv_col} values (≤ 0 or NaN)")
                 df.loc[invalid_wv, wv_col] = np.nan
 
-    # --- compute Si (only where T, P, and H2O are all valid) ---
-    if h2o_col and "T" in df.columns and "P" in df.columns:
-        # Build a validity mask: all three inputs must be finite and positive
-        valid = df[h2o_col].notna() & df["T"].notna() & df["P"].notna()
-        n_valid = valid.sum()
-        print(f"  {n_valid:,} rows with valid T, P, and {h2o_col} for Si calculation")
+    # Clean H2O alias columns (ppmv units for all three instruments)
+    if dlh_h2o:
+        df["H2O_DLH_ppmv"] = df[dlh_h2o]
+    if noaa_h2o:
+        df["H2O_NOAA_ppmv"] = df[noaa_h2o]
+    if ucats_h2o:
+        df["H2O_UCATS_ppmv"] = df[ucats_h2o]
 
-        df["Si"] = np.nan
-        if n_valid > 0:
-            df.loc[valid, "Si"] = si_from_ppmv(
-                df.loc[valid, h2o_col], df.loc[valid, "T"], df.loc[valid, "P"]
-            )
-        print(f"  Computed Si using H2O={h2o_col}, T from {'MMS' if mms_t_col else 'fallback'}, "
-              f"P from {'MMS' if mms_p_col else 'fallback'}")
+    # --- compute per-instrument Si ---
+    _si_col_map = {"DLH": "Si_DLH", "NOAA": "Si_NOAA", "UCATS": "Si_UCATS"}
 
-        # Also compute Si from the second H2O source if available
-        h2o_alt = noaa_h2o if h2o_col == dlh_h2o else dlh_h2o
-        if h2o_alt and h2o_alt in df.columns:
-            valid_alt = df[h2o_alt].notna() & df["T"].notna() & df["P"].notna()
-            df["Si_alt"] = np.nan
-            if valid_alt.sum() > 0:
-                df.loc[valid_alt, "Si_alt"] = si_from_ppmv(
-                    df.loc[valid_alt, h2o_alt], df.loc[valid_alt, "T"], df.loc[valid_alt, "P"]
-                )
-            print(f"  Also computed Si_alt using H2O={h2o_alt} ({valid_alt.sum():,} valid rows)")
-    else:
+    if "T" not in df.columns or "P" not in df.columns:
         missing = []
-        if not h2o_col:
-            missing.append("H2O (ppmv)")
         if "T" not in df.columns:
             missing.append("Temperature")
         if "P" not in df.columns:
             missing.append("Pressure")
         print(f"  WARNING: Cannot compute Si — missing columns: {', '.join(missing)}")
         print(f"  Available columns: {df.columns.tolist()}")
-        df["Si"] = np.nan
+        for si_col in _si_col_map.values():
+            df[si_col] = np.nan
+    else:
+        t_src = "MMS" if mms_t_col else "fallback"
+        p_src = "MMS" if mms_p_col else "fallback"
+        for inst_key, si_col in _si_col_map.items():
+            wv_col = _inst_h2o_cols.get(inst_key)
+            if wv_col is None or wv_col not in df.columns:
+                df[si_col] = np.nan
+                continue
+            valid = df[wv_col].notna() & df["T"].notna() & df["P"].notna()
+            n_valid = valid.sum()
+            print(f"  {n_valid:,} rows with valid T, P, {wv_col} → {si_col} "
+                  f"(T={t_src}, P={p_src})")
+            df[si_col] = np.nan
+            if n_valid > 0:
+                df.loc[valid, si_col] = si_from_ppmv(
+                    df.loc[valid, wv_col], df.loc[valid, "T"], df.loc[valid, "P"]
+                )
 
-    # --- final Si sanity check: values outside [-1, 10] are suspect ---
-    if "Si" in df.columns:
-        extreme = (df["Si"].abs() > 10) & df["Si"].notna()
-        n_extreme = extreme.sum()
-        if n_extreme > 0:
-            print(f"  Masking {n_extreme:,} extreme Si values (|Si| > 10)")
-            df.loc[extreme, "Si"] = np.nan
-    if "Si_alt" in df.columns:
-        extreme_alt = (df["Si_alt"].abs() > 10) & df["Si_alt"].notna()
-        if extreme_alt.sum() > 0:
-            df.loc[extreme_alt, "Si_alt"] = np.nan
+    # Sanity check all Si columns: |Si| > 10 is physically implausible
+    for si_col in _si_col_map.values():
+        if si_col in df.columns:
+            extreme = (df[si_col].abs() > 10) & df[si_col].notna()
+            if extreme.sum() > 0:
+                print(f"  Masking {extreme.sum():,} extreme {si_col} values (|Si| > 10)")
+                df.loc[extreme, si_col] = np.nan
+
+    # --- Si_best: fill from ranking ---
+    ranking = h2o_ranking if h2o_ranking is not None else _DEFAULT_H2O_RANKING
+    df["Si_best"] = np.nan
+    for inst_key in ranking:
+        si_col = _si_col_map.get(inst_key.upper().replace("-H2O", ""))
+        if si_col and si_col in df.columns:
+            mask = df["Si_best"].isna() & df[si_col].notna()
+            df.loc[mask, "Si_best"] = df.loc[mask, si_col]
+    print(f"  Si_best ranking: {ranking}")
+
+    # Si kept for backward compatibility
+    df["Si"] = df["Si_best"]
 
     # --- temperature in Celsius ---
     if "T" in df.columns:
@@ -477,7 +519,10 @@ def extract_attrex_standard(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        Standardized data with Timestamp, Tair_C, Si, Lat, Lon, Alt_m, Campaign.
+        Standardized data with Timestamp, Tair_C, Si (=Si_best),
+        Si_best, Si_DLH, Si_NOAA, Si_UCATS,
+        H2O_DLH_ppmv, H2O_NOAA_ppmv, H2O_UCATS_ppmv,
+        Lat, Lon, Alt_m, Campaign, source_file.
     """
     # Find position columns: prefer scaled versions (Lat, Lon) created during load,
     # then fall back to raw prefixed columns
@@ -494,10 +539,20 @@ def extract_attrex_standard(df: pd.DataFrame) -> pd.DataFrame:
     else:
         source = ""
 
+    def _get(col):
+        return df[col] if col in df.columns else np.nan
+
     return pd.DataFrame({
         "Timestamp": df.get("Timestamp", pd.NaT),
         "Tair_C": df.get("T_C", np.nan),
-        "Si": df.get("Si", np.nan),
+        "Si": _get("Si_best"),
+        "Si_best": _get("Si_best"),
+        "Si_DLH": _get("Si_DLH"),
+        "Si_NOAA": _get("Si_NOAA"),
+        "Si_UCATS": _get("Si_UCATS"),
+        "H2O_DLH_ppmv": _get("H2O_DLH_ppmv"),
+        "H2O_NOAA_ppmv": _get("H2O_NOAA_ppmv"),
+        "H2O_UCATS_ppmv": _get("H2O_UCATS_ppmv"),
         "Lat": df[lat_col] if lat_col else np.nan,
         "Lon": df[lon_col] if lon_col else np.nan,
         "Alt_m": df[alt_col] if alt_col else np.nan,

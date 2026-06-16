@@ -57,9 +57,16 @@ campaigns:
   ATTREX:
     path: ./data/raw/ATTREX
     pattern: "*.ict"
+    # Ordered preference for Si_best: first instrument with valid data wins.
+    # Keys must match: "DLH", "NOAA", "UCATS"
+    h2o_ranking:
+      - DLH
+      - NOAA
+      - UCATS
     description: >
       ATTREX (Airborne Tropical TRopopause EXperiment).
       NASA ICARTT (.ict) files from Global Hawk.
+      Water vapor instruments (in preference order for Si_best): DLH-H2O, NOAA-H2O, UCATS-H2O.
 
   IPHEX:
     path: ./data/raw/IPHEX

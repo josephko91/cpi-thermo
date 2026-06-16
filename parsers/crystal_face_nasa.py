@@ -3,7 +3,7 @@ CRYSTAL-FACE NASA (WB-57) campaign data parser.
 
 Campaign: CRYSTAL-FACE NASA WB-57 aircraft
 Data Source: https://espoarchive.nasa.gov/archive/browse/crystalf/WB57
-Data Formats:
+Data:
     - Water Vapor
         - JPL Laser Hygrometer (JLH) data (only ~16% coverage for water vapor)
         - ALIAS (Airborne Laser Absorption Spectrometer) data 
