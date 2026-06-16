@@ -6,6 +6,7 @@ data/
 scripts/tests/output/
 logs/
 *.DS_Store
+figs/
 
 # C extensions
 *.so
