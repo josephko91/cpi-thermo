@@ -8,6 +8,8 @@ campaigns:
   ARM:
     path: ./data/raw/ARM
     pattern: "*.t4archive.gz"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       ARM SGP 2000 Spring Cloud Campaign.
       Binary .t4archive.gz files from Citation aircraft.
@@ -15,6 +17,10 @@ campaigns:
   CRYSTAL-FACE-NASA:
     path: ./data/raw/CRYSTAL-FACE-NASA
     pattern: "*"
+    h2o_ranking:
+      - JLH
+      - HW
+      - ALIAS
     description: >
       CRYSTAL-FACE NASA WB-57 aircraft.
       JPL Laser Hygrometer (JLH) data files.
@@ -22,6 +28,9 @@ campaigns:
   CRYSTAL-FACE-UND:
     path: ./data/raw/CRYSTAL-FACE-UND
     pattern: "*MIS.CIT"
+    h2o_ranking:
+      - LH-unspecified
+      - chilled-mirror
     description: >
       CRYSTAL-FACE UND Citation aircraft.
       MIS.CIT humidity files with corresponding MET.CIT meteorology.
@@ -50,6 +59,8 @@ campaigns:
   AIRS-II:
     path: ./data/raw/AIRS-II
     pattern: "*.nc"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       AIRS-II (Alliance Icing Research Study II).
       NetCDF files with LRT flight-level data.
@@ -71,11 +82,17 @@ campaigns:
   IPHEX:
     path: ./data/raw/IPHEX
     pattern: "*.iphex"
+    # Chilled mirror preferred: 27.5% supersaturated fraction vs 6.1% for Ophir TDL.
+    # TDL has a systematic dry bias (~0.32 Si offset); closed-path inlet losses suspected
+    # at near-0 °C. DEWPT available all 32 flights but not in ranking (less accurate).
+    h2o_ranking:
+      - chilled-mirror  # FrostPoint column; 24/32 flights; median Si = -0.13
+      - ophir-tdl       # MixingRatio ppmv; 24/32 flights; median Si = -0.45 (dry bias)
     description: >
       IPHEX (Integrated Precipitation and Hydrology Experiment).
-      Uses chilled-mirror FrostPoint with Air_Temp and STATIC_PR state variables.
-      Si is computed as supersaturation with respect to ice from FrostPoint vs Air_Temp,
-      with invalid value masking and physical-limit filters.
+      UND Citation over Appalachians, mixed-phase precipitation focus.
+      Primary Si from chilled-mirror FrostPoint; Ophir TDL (MixingRatio ppmv) as fallback.
+      State variables: Air_Temp (°C), STATIC_PR (hPa).
 
   ISDAC:
     path: ./data/raw/ISDAC/strapp-convair_bulk/CommaDelimited
@@ -101,6 +118,8 @@ campaigns:
   ESCAPE:
     path: ./data/raw/ESCAPE/learjet-state-measurements/jk4731582465
     pattern: "ESCAPE-Page0_Learjet_*.ict"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       ESCAPE Learjet state measurements (NASA ICARTT-like .ict files).
       Si is computed from dew point and ambient temperature with respect to ice.
@@ -118,6 +137,9 @@ campaigns:
   ICE-L:
     path: ./data/raw/ICE-L
     pattern: "*.PNI.nc"
+    h2o_ranking:
+      - chilled-mirror
+      - MRTDL
     description: >
       ICE-L RAF/Nimbus netCDF flight files.
       Uses ATX (temperature), PSXC (pressure), and RHUM (pre-calculated RH).

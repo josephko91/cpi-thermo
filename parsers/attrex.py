@@ -255,9 +255,20 @@ def _combine_ict_files(
     if not instrument_dfs:
         raise ValueError("No ATTREX instrument files could be parsed.")
 
-    # Merge across instruments using merge_asof on datetime_utc
-    instruments = list(instrument_dfs.keys())
-    merged = instrument_dfs[instruments[0]].copy()
+    # Choose the merge anchor: prefer MMS (provides T and P required for Si;
+    # its 1 Hz time grid is the natural base for all joins). If MMS isn't
+    # present, fall back to the instrument that starts earliest.
+    # Anchoring on rglob insertion order is wrong — it silently drops data
+    # from instruments that start earlier than the accidentally-chosen anchor.
+    if "MMS" in instrument_dfs:
+        anchor = "MMS"
+    else:
+        anchor = min(
+            instrument_dfs.keys(),
+            key=lambda inst: instrument_dfs[inst]["datetime_utc"].min(),
+        )
+    instruments = [anchor] + [k for k in instrument_dfs if k != anchor]
+    merged = instrument_dfs[anchor].copy()
 
     for inst in instruments[1:]:
         right = instrument_dfs[inst]

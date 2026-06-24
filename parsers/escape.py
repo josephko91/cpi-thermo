@@ -10,6 +10,7 @@ Notes
 - Source: NCAR EOL (https://data.eol.ucar.edu/dataset/list?project=619&children=project)
 - Data files can contain repeated pseudo-headers; parser selects the most likely
   data header (with `Time_Start` and many comma-separated columns).
+- water vapor: EdgeTech Chilled Mirror C-137
 - Ice supersaturation (Si) is computed from dew point and ambient temperature
   using saturation vapor pressure over ice (Murphy & Koop 2005 in utils.es_ice).
 """
