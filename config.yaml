@@ -15,8 +15,8 @@ campaigns:
       Binary .t4archive.gz files from Citation aircraft.
     
   CRYSTAL-FACE-NASA:
-    path: ./data/raw/CRYSTAL-FACE-NASA
-    pattern: "*"
+    path: ./data/raw/CRYSTAL-FACE-NASA/JW
+    pattern: "*.WB57"
     h2o_ranking:
       - JLH
       - HW
@@ -28,6 +28,7 @@ campaigns:
   CRYSTAL-FACE-UND:
     path: ./data/raw/CRYSTAL-FACE-UND
     pattern: "*MIS.CIT"
+    # MIS.CIT files live under the ND_MIS/ subdirectory; loader uses rglob.
     h2o_ranking:
       - LH-unspecified
       - chilled-mirror
@@ -38,6 +39,8 @@ campaigns:
   MC3E:
     path: ./data/raw/MC3E
     pattern: "*"
+    h2o_ranking:
+      - DLH
     description: >
       MC3E (Midlatitude Continental Convective Clouds Experiment).
       NASA ICARTT-style text files.
@@ -45,6 +48,8 @@ campaigns:
   MIDCIX:
     path: ./data/raw/MidCix
     pattern: "*"
+    h2o_ranking:
+      - JLH
     description: >
       MidCiX (Midlatitude Cirrus Experiment) WB-57.
       JLH (JPL Laser Hygrometer) text files.
@@ -97,6 +102,8 @@ campaigns:
   ISDAC:
     path: ./data/raw/ISDAC/strapp-convair_bulk/CommaDelimited
     pattern: "*.txt"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       ISDAC (Indirect and Semi-Direct Aerosol Campaign) 2008 Convair 580.
       Comma-delimited STRAPP bulk microphysics files.
@@ -107,6 +114,8 @@ campaigns:
   POSIDON:
     path: ./data/raw/POSIDON
     pattern: "*.ict"
+    h2o_ranking:
+      - DLH
     description: >
       POSIDON 2016 NASA WB-57, western Pacific stratosphere.
       NASA ICARTT (.ict) files organised in instrument subdirectories
@@ -116,7 +125,7 @@ campaigns:
       Si is clipped to [-1, 1].
 
   ESCAPE:
-    path: ./data/raw/ESCAPE/learjet-state-measurements/jk4731582465
+    path: ./data/raw/ESCAPE/spec-learjet-state
     pattern: "ESCAPE-Page0_Learjet_*.ict"
     h2o_ranking:
       - chilled-mirror
@@ -127,6 +136,11 @@ campaigns:
   MACPEX:
     path: ./data/raw/MACPEX
     pattern: "*.ict"
+    h2o_ranking:
+      - HWV
+      - DLH
+      - JLH
+      - FISH
     description: >
       MACPEX (Mid-latitude Airborne Cirrus Properties Experiment) 2011 WB-57.
       NASA ICARTT (.ict) files organised in instrument subdirectories

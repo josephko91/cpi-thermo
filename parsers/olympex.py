@@ -6,6 +6,7 @@ Data Source: https://www.earthdata.nasa.gov/data/catalog/ghrc-daac-gpmcmolyx-1
 Data Format: UND Citation data files with predefined column structure
 
 Note: OLYMPEX water vapor measurements may have instrument issues.
+- No apparent water vapor instrument data found.
 """
 
 import pandas as pd

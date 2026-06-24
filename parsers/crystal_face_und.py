@@ -101,8 +101,15 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
     # Read MIS.CIT (humidity data)
     df_mis = _read_mis_cit_file(filepath_mis)
     
-    # Find corresponding MET.CIT file
-    met_path = Path(str(filepath_mis).replace("MIS.CIT", "MET.CIT"))
+    # Find corresponding MET.CIT file.
+    # When files are in instrument subdirectories (ND_MIS/ and ND_MET/), we must
+    # also replace the directory name, not just the filename suffix.
+    met_filename = filepath_mis.name.replace("MIS.CIT", "MET.CIT")
+    met_candidates = [
+        filepath_mis.parent / met_filename,                    # same directory (flat layout)
+        filepath_mis.parent.parent / "ND_MET" / met_filename,  # sibling ND_MET/ subdir
+    ]
+    met_path = next((p for p in met_candidates if p.exists()), met_candidates[0])
     
     if not met_path.exists():
         df_mis["Tair"] = np.nan
@@ -154,8 +161,9 @@ def load_crystal_face_und(
         Combined data from all files.
     """
     data_dir = Path(data_dir)
-    files = list(data_dir.glob(pattern))
-    
+    # Use rglob so files inside subdirectories (e.g. ND_MIS/) are found.
+    files = list(data_dir.rglob(pattern))
+
     if not files:
         raise FileNotFoundError(f"No files matching '{pattern}' found in {data_dir}")
     

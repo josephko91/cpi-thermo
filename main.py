@@ -53,8 +53,8 @@ DEFAULT_CAMPAIGN_CONFIG: Dict[str, Dict] = {
         "extractor": extract_arm_standard,
     },
     "CRYSTAL-FACE-NASA": {
-        "path": "./data/raw/CRYSTAL-FACE-NASA",
-        "pattern": "*",
+        "path": "./data/raw/CRYSTAL-FACE-NASA/JW",
+        "pattern": "*.WB57",
         "loader": "load_crystal_face_nasa",
         "extractor": extract_crystal_face_nasa_standard,
     },
@@ -113,7 +113,7 @@ DEFAULT_CAMPAIGN_CONFIG: Dict[str, Dict] = {
         "extractor": extract_posidon_standard,
     },
     "ESCAPE": {
-        "path": "./data/raw/ESCAPE/learjet-state-measurements/jk4731582465",
+        "path": "./data/raw/ESCAPE/spec-learjet-state",
         "pattern": "ESCAPE-Page0_Learjet_*.ict",
         "loader": "load_escape",
         "extractor": extract_escape_standard,
@@ -138,9 +138,24 @@ DEFAULT_CAMPAIGN_CONFIG: Dict[str, Dict] = {
 # =============================================================================
 
 def load_campaign_config(config_path: Path) -> Dict:
-    """Load campaign configuration from YAML file."""
+    """Load campaign configuration from YAML file.
+
+    The YAML schema stores campaigns under a 'campaigns' key and does not
+    include extractor callables. This function flattens to the same dict
+    structure as DEFAULT_CAMPAIGN_CONFIG and injects extractors so that
+    parser-specific logic is preserved when running with --config.
+    """
     with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+        raw = yaml.safe_load(f)
+    # Support both flat {"ARM": {...}} and nested {"campaigns": {"ARM": {...}}}
+    campaigns_yaml = raw.get("campaigns", raw)
+    result: Dict = {}
+    for name, yaml_cfg in campaigns_yaml.items():
+        default = DEFAULT_CAMPAIGN_CONFIG.get(name, {})
+        # YAML keys (path, pattern, h2o_ranking) override defaults; extractor is
+        # injected from DEFAULT_CAMPAIGN_CONFIG since it cannot be serialised to YAML.
+        result[name] = {**default, **yaml_cfg}
+    return result
 
 
 def process_campaign(
@@ -215,7 +230,12 @@ def process_campaign(
             "Campaign": campaign_name,
             "source_file": df_raw.get("source_file", ""),
         })
-    
+
+    # Uniform Si floor/ceiling: Si < -1 is physically impossible; Si > 2 is
+    # almost certainly an instrument artefact across all campaigns.
+    if "Si" in df_std.columns:
+        df_std["Si"] = pd.to_numeric(df_std["Si"], errors="coerce").clip(-1.0, 2.0)
+
     # Ensure Campaign column
     df_std["Campaign"] = campaign_name
     

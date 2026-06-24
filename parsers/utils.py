@@ -115,8 +115,14 @@ def si_from_rh(rh_percent: np.ndarray) -> np.ndarray:
 
 
 def normalize_datetime_utc(values: pd.Series) -> pd.Series:
-    """Normalize datetime values to UTC nanosecond precision."""
-    return pd.to_datetime(values, utc=True, errors="coerce").astype("datetime64[ns, UTC]")
+    """Normalize datetime values to UTC nanosecond precision.
+
+    Uses dt.as_unit("ns") rather than astype() because in pandas 2.0+ the
+    default resolution for tz-aware datetimes is microseconds, and astype()
+    can silently preserve the original resolution in some build configurations.
+    """
+    parsed = pd.to_datetime(values, utc=True, errors="coerce")
+    return parsed.dt.as_unit("ns")
 
 
 # =============================================================================

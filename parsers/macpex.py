@@ -118,6 +118,13 @@ WV_SOURCE_COLS: Dict[str, List[str]] = {
 
 WvSource = Literal["DLH", "HWV", "JLH"]
 
+# Map h2o_ranking strings to WvSource keys
+H2O_RANK_TO_WV: Dict[str, WvSource] = {
+    "HWV": "HWV",
+    "DLH": "DLH",
+    "JLH": "JLH",
+}
+
 #: Physical validity bounds applied before Si calculation.
 T_BOUNDS_K    = (150.0, 350.0)   # MACPEX WB-57 tropopause region
 P_BOUNDS_HPA  = (10.0,  1100.0)
@@ -228,7 +235,7 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
         df["datetime_utc"] = flight_date + pd.to_timedelta(elapsed, unit="s")
     else:
         df["datetime_utc"] = pd.NaT
-    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").astype("datetime64[ns, UTC]")
+    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").dt.as_unit("ns")
 
     # --- rename data columns with instrument prefix so they survive merging ---
     prefix = instrument  # e.g. "DLH-H2O", "MMS-MetData"
@@ -289,10 +296,14 @@ def _load_and_merge(
               f"{len(combined.columns)} cols")
 
     # Merge across instruments with merge_asof on datetime_utc
-    # Start with MMS-MetData (navigation/met state) as the left frame so every
-    # row has valid T and P whenever possible.
+    # Start with MMS (navigation/met state) as the left frame so every
+    # row has valid T and P whenever possible.  MACPEX uses folder "MMS-Met";
+    # other mirror sites may use "MMS-MetData".
     instruments = list(instrument_dfs.keys())
-    primary = "MMS-MetData" if "MMS-MetData" in instruments else instruments[0]
+    primary = next(
+        (i for i in instruments if i in ("MMS-MetData", "MMS-Met")),
+        instruments[0],
+    )
     other = [i for i in instruments if i != primary]
 
     merged = instrument_dfs[primary].copy()
@@ -357,7 +368,8 @@ def _find_mms_col(df: pd.DataFrame, suffix: str) -> Optional[str]:
 def load_macpex(
     data_dir: Union[str, Path],
     pattern: str = "*.ict",
-    wv_source: WvSource = "DLH",
+    wv_source: WvSource = "HWV",
+    h2o_ranking: Optional[List[str]] = None,
     time_tolerance: str = "1s",
 ) -> pd.DataFrame:
     """
@@ -418,6 +430,15 @@ def load_macpex(
     KeyError
         If the selected water-vapor column cannot be located after merging.
     """
+    # h2o_ranking (from config.yaml) takes precedence over wv_source default.
+    # Use the first ranking entry that maps to a known WvSource.
+    if h2o_ranking:
+        for rank in h2o_ranking:
+            mapped = H2O_RANK_TO_WV.get(rank)
+            if mapped is not None:
+                wv_source = mapped
+                break
+
     if wv_source not in WV_SOURCE_COLS:
         raise ValueError(
             f"wv_source must be one of {list(WV_SOURCE_COLS)}, got '{wv_source}'"
@@ -637,10 +658,18 @@ def extract_macpex_standard(df: pd.DataFrame) -> pd.DataFrame:
     else:
         source = pd.Series("", index=df.index)
 
+    # Cascade Si through available sources: primary (whichever wv_source was used)
+    # is already in "Si"; fill remaining NaN from alternate Si columns.
+    # Order: HWV (14 flights) → JLH (11 flights) → DLH (5 flights).
+    si = df["Si"].copy() if "Si" in df.columns else pd.Series(np.nan, index=df.index)
+    for si_fallback in ("Si_HWV", "Si_JLH", "Si_DLH"):
+        if si_fallback in df.columns:
+            si = si.fillna(df[si_fallback])
+
     return pd.DataFrame({
         "Timestamp": df.get("Timestamp", pd.NaT),
         "Tair_C":    df.get("T_C", np.nan),
-        "Si":        df.get("Si", np.nan),
+        "Si":        si,
         "Lat":       df[lat_col] if lat_col else np.nan,
         "Lon":       df[lon_col] if lon_col else np.nan,
         "Alt_m":     df[alt_col] if alt_col else np.nan,
