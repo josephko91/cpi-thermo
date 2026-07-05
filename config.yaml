@@ -163,11 +163,38 @@ campaigns:
 output:
   default_format: parquet
   standardized_columns:
-    - Timestamp      # UTC datetime
-    - Tair_C         # Air temperature (Celsius)
-    - Si             # Ice supersaturation (unitless, >0 = supersaturated)
-    - Lat            # Latitude (degrees)
-    - Lon            # Longitude (degrees)  
-    - Alt_m          # Altitude (meters)
-    - Campaign       # Campaign name
-    - source_file    # Original source file
+    - Timestamp           # UTC datetime
+    - Tair_C              # Air temperature (Celsius)
+    - P_hPa               # Atmospheric static pressure (hPa)
+    - Si                  # Ice supersaturation — best per h2o_ranking (unitless, >0 = supersaturated)
+    - Si_chilled_mirror   # Si from chilled-mirror hygrometer (ARM, ESCAPE, AIRS-II, IPHEX, ICE-L, CRYSTAL-FACE-UND)
+    - Si_DLH              # Si from Diode Laser Hygrometer (ATTREX, MACPEX, POSIDON, MC3E)
+    - Si_NOAA             # Si from NOAA TDL (ATTREX)
+    - Si_UCATS            # Si from UCATS (ATTREX)
+    - Si_HWV              # Si from Harvard Water Vapor (MACPEX)
+    - Si_JLH              # Si from JPL Laser Hygrometer (MACPEX, CRYSTAL-FACE-NASA, MIDCIX)
+    - Si_HW               # Si from Harvard Water Vapor (CRYSTAL-FACE-NASA)
+    - Si_ALIAS            # Si from ALIAS instrument (CRYSTAL-FACE-NASA; not loaded → NaN)
+    - Si_FISH             # Si from FISH instrument (MACPEX; not loaded → NaN)
+    - Si_MRTDL            # Si from Maycomm TDL long-path (ICE-L)
+    - Si_ophir_tdl        # Si from Ophir TDL (IPHEX)
+    - Si_LH_unspecified   # Si from unspecified Lyman-alpha hygrometer (CRYSTAL-FACE-UND)
+    - Si_frost_point      # Si from frost-point sensor (OLYMPEX)
+    - qv                  # Water vapor mass mixing ratio — best per h2o_ranking (g/kg)
+    - qv_chilled_mirror   # qv from chilled-mirror hygrometer (ARM, ESCAPE, AIRS-II, IPHEX, ICE-L, CRYSTAL-FACE-UND, ISDAC)
+    - qv_dlh              # qv from Diode Laser Hygrometer (ATTREX, MACPEX, POSIDON, MC3E)
+    - qv_noaa             # qv from NOAA TDL (ATTREX)
+    - qv_ucats            # qv from UCATS (ATTREX)
+    - qv_hwv              # qv from Harvard Water Vapor (MACPEX)
+    - qv_jlh              # qv from JPL Laser Hygrometer (MACPEX, CRYSTAL-FACE-NASA, MIDCIX)
+    - qv_hw               # qv from Harvard Water Vapor (CRYSTAL-FACE-NASA)
+    - qv_mrtdl            # qv from Maycomm TDL long-path (ICE-L)
+    - qv_ophir_tdl        # qv from Ophir TDL (IPHEX)
+    - qv_lh_unspecified   # qv from unspecified Lyman-alpha hygrometer (CRYSTAL-FACE-UND)
+    - qv_frost_point      # qv from frost-point sensor (OLYMPEX)
+    - Sw                  # Supersaturation w.r.t. liquid water (unitless, >0 = supersaturated w.r.t. liquid)
+    - Lat                 # Latitude (degrees)
+    - Lon                 # Longitude (degrees)
+    - Alt_m               # Altitude (meters)
+    - Campaign            # Campaign name
+    - source_file         # Original source file

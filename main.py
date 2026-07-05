@@ -13,9 +13,11 @@ Usage:
 """
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
+import numpy as np
 import pandas as pd
 import yaml
 import logging
@@ -233,8 +235,13 @@ def process_campaign(
 
     # Uniform Si floor/ceiling: Si < -1 is physically impossible; Si > 2 is
     # almost certainly an instrument artefact across all campaigns.
-    if "Si" in df_std.columns:
-        df_std["Si"] = pd.to_numeric(df_std["Si"], errors="coerce").clip(-1.0, 2.0)
+    for col in [c for c in df_std.columns if c == "Si" or c.startswith("Si_")]:
+        df_std[col] = pd.to_numeric(df_std[col], errors="coerce").clip(-1.0, 2.0)
+
+    # qv < 0 is physically impossible; clip negative values to NaN.
+    for col in [c for c in df_std.columns if c == "qv" or c.startswith("qv_")]:
+        s = pd.to_numeric(df_std[col], errors="coerce")
+        df_std[col] = s.where(s >= 0, np.nan)
 
     # Ensure Campaign column
     df_std["Campaign"] = campaign_name
@@ -317,36 +324,278 @@ def save_output(
         logging.info(f"Saved to: {output_path}")
 
 # =============================================================================
+# Diagnostics
+# =============================================================================
+
+# Ordered list of all known Si instrument columns (excludes 'Si' itself)
+_SI_INSTRUMENT_COLS = [
+    "Si_chilled_mirror",
+    "Si_DLH",
+    "Si_JLH",
+    "Si_HWV",
+    "Si_HW",
+    "Si_NOAA",
+    "Si_UCATS",
+    "Si_MRTDL",
+    "Si_ophir_tdl",
+    "Si_LH_unspecified",
+    "Si_frost_point",
+    "Si_ALIAS",
+    "Si_FISH",
+]
+
+# Short display labels for the terminal table
+_SI_SHORT = {
+    "Si":                 "Si",
+    "Si_chilled_mirror":  "CM",
+    "Si_DLH":             "DLH",
+    "Si_JLH":             "JLH",
+    "Si_HWV":             "HWV",
+    "Si_HW":              "HW",
+    "Si_NOAA":            "NOAA",
+    "Si_UCATS":           "UCATS",
+    "Si_MRTDL":           "MRTDL",
+    "Si_ophir_tdl":       "TDL",
+    "Si_LH_unspecified":  "LHU",
+    "Si_frost_point":     "FP",
+    "Si_ALIAS":           "ALIAS",
+    "Si_FISH":            "FISH",
+}
+
+# Ordered list of all known qv instrument columns (excludes 'qv' itself)
+_QV_INSTRUMENT_COLS = [
+    "qv_chilled_mirror",
+    "qv_dlh",
+    "qv_jlh",
+    "qv_hwv",
+    "qv_hw",
+    "qv_noaa",
+    "qv_ucats",
+    "qv_mrtdl",
+    "qv_ophir_tdl",
+    "qv_lh_unspecified",
+    "qv_frost_point",
+]
+
+_QV_SHORT = {
+    "qv":                  "qv",
+    "qv_chilled_mirror":   "CM",
+    "qv_dlh":              "DLH",
+    "qv_jlh":              "JLH",
+    "qv_hwv":              "HWV",
+    "qv_hw":               "HW",
+    "qv_noaa":             "NOAA",
+    "qv_ucats":            "UCATS",
+    "qv_mrtdl":            "MRTDL",
+    "qv_ophir_tdl":        "TDL",
+    "qv_lh_unspecified":   "LHU",
+    "qv_frost_point":      "FP",
+}
+
+
+def generate_diagnostics(df: pd.DataFrame, diag_dir: Path) -> None:
+    """Write diagnostic CSVs to diag_dir."""
+    diag_dir = Path(diag_dir)
+    diag_dir.mkdir(parents=True, exist_ok=True)
+
+    campaigns = sorted(df["Campaign"].unique())
+
+    # 1. Campaign summary
+    rows = []
+    for camp in campaigns:
+        sub = df[df["Campaign"] == camp]
+        n = len(sub)
+        ts = sub["Timestamp"].dropna()
+        rows.append({
+            "Campaign":        camp,
+            "n_records":       n,
+            "date_start":      ts.min().date() if len(ts) else None,
+            "date_end":        ts.max().date() if len(ts) else None,
+            "n_flight_days":   sub["Timestamp"].dt.date.nunique() if len(ts) else 0,
+            "tair_mean":       sub["Tair_C"].mean(),
+            "tair_std":        sub["Tair_C"].std(),
+            "tair_pct_valid":  sub["Tair_C"].notna().mean() * 100,
+            "si_mean":         sub["Si"].mean(),
+            "si_std":          sub["Si"].std(),
+            "si_pct_valid":    sub["Si"].notna().mean() * 100,
+            "si_pct_iss":      (sub["Si"] > 0).sum() / n * 100 if n else None,
+        })
+    summary_df = pd.DataFrame(rows)
+    summary_path = diag_dir / "campaign_summary.csv"
+    summary_df.round(4).to_csv(summary_path, index=False)
+    logging.info(f"  Diagnostics: {summary_path}")
+
+    # 2. Si instrument coverage — pct_valid per campaign × Si_* column
+    si_cols = ["Si"] + [c for c in _SI_INSTRUMENT_COLS if c in df.columns]
+    cov_rows = []
+    for camp in campaigns:
+        sub = df[df["Campaign"] == camp]
+        n = len(sub)
+        row = {"Campaign": camp, "n_records": n}
+        for col in si_cols:
+            if col in sub.columns:
+                row[col] = sub[col].notna().sum() / n * 100 if n else 0.0
+            else:
+                row[col] = np.nan
+        cov_rows.append(row)
+    cov_df = pd.DataFrame(cov_rows)
+    cov_path = diag_dir / "si_instrument_coverage.csv"
+    cov_df.round(2).to_csv(cov_path, index=False)
+    logging.info(f"  Diagnostics: {cov_path}")
+
+    # 3. qv instrument coverage — pct_valid per campaign × qv_* column
+    qv_cols = ["qv"] + [c for c in _QV_INSTRUMENT_COLS if c in df.columns]
+    qv_cov_rows = []
+    for camp in campaigns:
+        sub = df[df["Campaign"] == camp]
+        n = len(sub)
+        row = {"Campaign": camp, "n_records": n}
+        for col in qv_cols:
+            if col in sub.columns:
+                row[col] = sub[col].notna().sum() / n * 100 if n else 0.0
+            else:
+                row[col] = np.nan
+        qv_cov_rows.append(row)
+    qv_cov_df = pd.DataFrame(qv_cov_rows)
+    qv_cov_path = diag_dir / "qv_instrument_coverage.csv"
+    qv_cov_df.round(2).to_csv(qv_cov_path, index=False)
+    logging.info(f"  Diagnostics: {qv_cov_path}")
+
+
+# =============================================================================
 # Summary Statistics
 # =============================================================================
 
-def print_summary(df: pd.DataFrame) -> None:
-    """Print summary statistics for the combined dataset."""
-    logging.info("\n" + "=" * 60)
-    logging.info("SUMMARY STATISTICS")
-    logging.info("=" * 60)
-    
-    # Per-campaign summary
-    summary = df.groupby("Campaign").agg(
-        n_records=("Timestamp", "count"),
-        earliest=("Timestamp", "min"),
-        latest=("Timestamp", "max"),
-        tair_mean=("Tair_C", "mean"),
-        tair_std=("Tair_C", "std"),
-        si_mean=("Si", "mean"),
-        si_std=("Si", "std"),
-    )
-    
-    logging.info("\nPer-campaign statistics:")
-    logging.info(summary.to_string())
-    
-    # Missing data summary
-    logging.info("\nMissing data per column:")
-    missing = df.isnull().sum()
-    missing_pct = (missing / len(df) * 100).round(2)
-    for col in df.columns:
-        if missing[col] > 0:
-            logging.info(f"  {col}: {missing[col]:,} ({missing_pct[col]:.2f}%)")
+def print_summary(df: pd.DataFrame, output_path: Optional[Path] = None,
+                  diag_dir: Optional[Path] = None,
+                  figs_dir: Optional[Path] = None) -> None:
+    """Print a comprehensive summary to stdout and the log."""
+    campaigns = sorted(df["Campaign"].unique())
+    n_total = len(df)
+    si_cols_present = ["Si"] + [c for c in _SI_INSTRUMENT_COLS if c in df.columns]
+
+    lines: List[str] = []
+    W = 72
+
+    lines.append("=" * W)
+    lines.append(" PIPELINE SUMMARY")
+    lines.append("=" * W)
+    lines.append(f"  Campaigns processed : {len(campaigns)}")
+    lines.append(f"  Total records       : {n_total:,}")
+    lines.append("")
+
+    # --- Per-campaign table ---
+    lines.append(f"  {'Campaign':<24} {'Records':>9}  {'Date range':<24}  {'Si valid':>8}  {'Tair valid':>10}")
+    lines.append("  " + "-" * (W - 2))
+    for camp in campaigns:
+        sub = df[df["Campaign"] == camp]
+        n = len(sub)
+        ts = sub["Timestamp"].dropna()
+        if len(ts):
+            date_range = f"{ts.min().date()} → {ts.max().date()}"
+        else:
+            date_range = "—"
+        si_pct   = sub["Si"].notna().mean() * 100 if "Si" in sub.columns else 0.0
+        tair_pct = sub["Tair_C"].notna().mean() * 100
+        lines.append(
+            f"  {camp:<24} {n:>9,}  {date_range:<24}  {si_pct:>7.1f}%  {tair_pct:>9.1f}%"
+        )
+    lines.append("")
+
+    # --- Si instrument coverage table ---
+    # Only show columns that have at least 1 non-NaN value anywhere
+    active_si = [c for c in si_cols_present
+                 if c in df.columns and df[c].notna().any()]
+
+    if len(active_si) > 1:
+        headers = [_SI_SHORT.get(c, c) for c in active_si]
+        col_w = max(len(h) for h in headers) + 2
+
+        lines.append("  Si instrument coverage (% of campaign records with valid data):")
+        hdr = f"  {'Campaign':<24}" + "".join(f"{h:>{col_w}}" for h in headers)
+        lines.append(hdr)
+        lines.append("  " + "-" * (W - 2))
+        for camp in campaigns:
+            sub = df[df["Campaign"] == camp]
+            n = len(sub)
+            row = f"  {camp:<24}"
+            for col in active_si:
+                if col in sub.columns and n > 0:
+                    pct = sub[col].notna().sum() / n * 100
+                    cell = f"{pct:.0f}%" if pct > 0 else "—"
+                else:
+                    cell = "—"
+                row += f"{cell:>{col_w}}"
+            lines.append(row)
+        lines.append("")
+
+    # --- Overall Si stats ---
+    lines.append(f"  {'Metric':<28} {'Mean':>8}  {'Std':>7}  {'Median':>8}  {'% valid':>8}")
+    lines.append("  " + "-" * (W - 2))
+    for col in active_si:
+        if col not in df.columns:
+            continue
+        s = df[col].dropna()
+        if len(s) == 0:
+            continue
+        lines.append(
+            f"  {col:<28} {s.mean():>8.4f}  {s.std():>7.4f}  {np.median(s):>8.4f}  {len(s)/n_total*100:>7.1f}%"
+        )
+    lines.append("")
+
+    # --- qv instrument coverage table ---
+    qv_cols_present = ["qv"] + [c for c in _QV_INSTRUMENT_COLS if c in df.columns]
+    active_qv = [c for c in qv_cols_present if c in df.columns and df[c].notna().any()]
+
+    if len(active_qv) >= 1:
+        qv_headers = [_QV_SHORT.get(c, c) for c in active_qv]
+        qv_col_w = max(len(h) for h in qv_headers) + 2
+
+        lines.append("  qv instrument coverage (% of campaign records with valid data):")
+        hdr = f"  {'Campaign':<24}" + "".join(f"{h:>{qv_col_w}}" for h in qv_headers)
+        lines.append(hdr)
+        lines.append("  " + "-" * (W - 2))
+        for camp in campaigns:
+            sub = df[df["Campaign"] == camp]
+            n = len(sub)
+            row = f"  {camp:<24}"
+            for col in active_qv:
+                if col in sub.columns and n > 0:
+                    pct = sub[col].notna().sum() / n * 100
+                    cell = f"{pct:.0f}%" if pct > 0 else "—"
+                else:
+                    cell = "—"
+                row += f"{cell:>{qv_col_w}}"
+            lines.append(row)
+        lines.append("")
+
+    # --- Overall qv stats ---
+    if active_qv:
+        lines.append(f"  {'qv Metric':<28} {'Mean':>8}  {'Std':>7}  {'Median':>8}  {'% valid':>8}")
+        lines.append("  " + "-" * (W - 2))
+        for col in active_qv:
+            if col not in df.columns:
+                continue
+            s = df[col].dropna()
+            if len(s) == 0:
+                continue
+            lines.append(
+                f"  {col:<28} {s.mean():>8.4f}  {s.std():>7.4f}  {np.median(s):>8.4f}  {len(s)/n_total*100:>7.1f}%"
+            )
+        lines.append("")
+
+    # --- Output paths ---
+    if output_path:
+        lines.append(f"  Output   : {output_path}")
+    if diag_dir:
+        lines.append(f"  Diag dir : {diag_dir}/")
+    if figs_dir:
+        lines.append(f"  Figs dir : {figs_dir}/")
+    lines.append("=" * W)
+
+    text = "\n".join(lines)
+    print(text)
+    logging.info("\n" + text)
 
 # =============================================================================
 # CLI Interface
@@ -354,70 +603,91 @@ def print_summary(df: pd.DataFrame) -> None:
 
 def parse_args():
     """Parse command line arguments."""
+    root = Path(__file__).parent
     parser = argparse.ArgumentParser(
         description="Process field campaign environmental data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     # Process specific campaigns
-    python main.py --campaigns ARM MC3E --output data/combined.parquet
-    
+    python main.py --campaigns ARM MC3E --output data/out/combined.parquet
+
     # Process all campaigns
-    python main.py --all --output data/combined.parquet
-    
+    python main.py --all --output data/out/combined.parquet
+
     # Use custom config file
-    python main.py --config campaigns.yaml --output data/combined.parquet
-    
-    # Dry run (no output file)
-    python main.py --campaigns ARM --dry-run
+    python main.py --config config.yaml --output data/out/combined.parquet
+
+    # Skip figures
+    python main.py --all --no-plots
         """,
     )
-    
+
     parser.add_argument(
         "--campaigns",
         nargs="+",
         choices=list(DEFAULT_CAMPAIGN_CONFIG.keys()),
         help="Campaign(s) to process",
     )
-    
+
     parser.add_argument(
         "--all",
         action="store_true",
         help="Process all available campaigns",
     )
-    
+
     parser.add_argument(
         "--config",
         type=Path,
         help="Path to YAML configuration file",
     )
-    
+
     parser.add_argument(
         "--output", "-o",
         type=Path,
-        default=Path("combined_env_data.parquet"),
-        help="Output file path (parquet or csv)",
+        default=root / "data" / "out" / "combined_env_data.parquet",
+        help="Output parquet/csv path",
     )
-    
+
     parser.add_argument(
         "--log-file",
         type=Path,
-        default=Path("output.log"),
-        help="Path to log file (default: output.log)",
+        default=root / "logs" / "output.log",
+        help="Path to log file",
     )
-    
+
+    parser.add_argument(
+        "--diag-dir",
+        type=Path,
+        default=root / "logs" / "diagnostics",
+        help="Directory for diagnostic CSV outputs",
+    )
+
+    parser.add_argument(
+        "--figs-dir",
+        type=Path,
+        default=root / "figs" / "all-campaigns",
+        help="Directory for figure outputs",
+    )
+
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Process data without saving",
+        help="Process data without saving output or figures",
     )
-    
+
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip figure generation",
+    )
+
     parser.add_argument(
         "--quiet", "-q",
         action="store_true",
         help="Suppress progress messages",
     )
-    
+
     return parser.parse_args()
 
 
@@ -425,46 +695,79 @@ def main():
     """Main entry point."""
     args = parse_args()
     verbose = not args.quiet
-    
-    # Set up logging
+
+    # Ensure log directory exists before configuring file handler
+    args.log_file.parent.mkdir(parents=True, exist_ok=True)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
             logging.FileHandler(args.log_file),
-            logging.StreamHandler()
-        ]
+            logging.StreamHandler(),
+        ],
     )
+
     try:
         # Determine campaigns to process
         if args.all:
-            campaigns = None  # Will process all
+            campaigns = None
         elif args.campaigns:
             campaigns = args.campaigns
         else:
-            logging.error("Error: Specify --campaigns or --all")
+            logging.error("Specify --campaigns or --all")
             sys.exit(1)
-        
+
         # Load custom config if provided
         config = None
         if args.config:
             config = load_campaign_config(args.config)
-        
+
         # Process campaigns
         df = process_all_campaigns(campaigns, config, verbose)
-        
-        # Print summary
-        if verbose:
-            print_summary(df)
-        
-        # Save output
+
+        # Save parquet / CSV
         if not args.dry_run:
             save_output(df, args.output, verbose)
-    
+
+        # Diagnostics CSVs
+        if not args.dry_run:
+            generate_diagnostics(df, args.diag_dir)
+
+        # Figures — run plot_all_campaigns.py as subprocess so it can find the saved parquet
+        if not args.dry_run and not args.no_plots:
+            plot_script = Path(__file__).parent / "scripts" / "plot_all_campaigns.py"
+            if plot_script.exists():
+                python = sys.executable
+                env_path = str(args.output)
+                out_dir  = str(args.figs_dir)
+                logging.info(f"Generating figures → {out_dir}")
+                result = subprocess.run(
+                    [python, str(plot_script), "--env", env_path, "--out", out_dir],
+                    capture_output=True, text=True,
+                )
+                if result.stdout:
+                    logging.info(result.stdout.strip())
+                if result.returncode != 0:
+                    logging.warning(f"plot_all_campaigns.py exited with code {result.returncode}")
+                    if result.stderr:
+                        logging.warning(result.stderr.strip())
+            else:
+                logging.warning(f"Plot script not found: {plot_script}")
+
+        # Summary to terminal
+        if verbose:
+            print_summary(
+                df,
+                output_path=args.output if not args.dry_run else None,
+                diag_dir=args.diag_dir if not args.dry_run else None,
+                figs_dir=args.figs_dir if not args.dry_run and not args.no_plots else None,
+            )
+
         return df
-    
+
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logging.error(f"Error: {e}", exc_info=True)
         sys.exit(1)
 
 
