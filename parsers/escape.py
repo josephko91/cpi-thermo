@@ -300,6 +300,28 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
         bad_alt = (df[alt_col] < -500) | (df[alt_col] > 25000)
         df.loc[bad_alt, alt_col] = np.nan
 
+    # Temperature sensor failure: Tair > -20°C at altitude > 10 km is physically
+    # impossible (ISA at 10 km = -49.9°C; even the warmest real anomaly stays below
+    # -25°C in that layer).  Observed on 2022-06-10 where the Learjet's Tair sensor
+    # reported -7 to +12°C at 12–17 km, corrupting Si and qv for those rows.
+    # Threshold chosen conservatively: -20°C still flags the observed +12°C readings
+    # while leaving room for legitimate cold-season warm anomalies (e.g. sudden
+    # stratospheric warming events peak near -30°C at 10 km).
+    if temp_col and alt_col:
+        sensor_failure = (
+            df[temp_col].notna() & df[alt_col].notna()
+            & (df[temp_col] > -20.0) & (df[alt_col] > 10_000.0)
+        )
+        n_fail = int(sensor_failure.sum())
+        if n_fail > 0:
+            df.loc[sensor_failure, temp_col] = np.nan
+            if dew_col:
+                df.loc[sensor_failure, dew_col] = np.nan
+            print(
+                f"  ESCAPE QC: nulled {n_fail:,} rows where Tair > -20°C at Alt > 10 km "
+                f"(temperature sensor failure — check source file)"
+            )
+
     # Derived variables
     if dew_col and temp_col:
         df["Si_chilled_mirror"] = si_from_frost_point(df[dew_col], df[temp_col])
