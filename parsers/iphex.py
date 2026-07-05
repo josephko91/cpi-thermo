@@ -370,6 +370,15 @@ def extract_iphex_standard(df: pd.DataFrame) -> pd.DataFrame:
     if fp is not None and p is not None:
         e_cm = es_ice_hPa(np.asarray(fp, dtype=float))
         qv_cm = qv_from_e_P(e_cm, np.asarray(p, dtype=float))
+        # qv_cm is derived from the same FrostPoint/STATIC_PR pair as
+        # Si_chilled_mirror, which is already clipped to a plausible [-1, 5]
+        # range (line ~289). qv_from_e_P has no upper bound of its own, so
+        # propagate the Si clip's NaN mask to keep the two consistent —
+        # otherwise a row with implausible Si can still carry an unbounded qv.
+        si_cm = df.get("Si_chilled_mirror")
+        if si_cm is not None:
+            qv_cm = pd.Series(qv_cm, index=df.index, dtype=float)
+            qv_cm = qv_cm.where(si_cm.notna(), np.nan)
     else:
         qv_cm = np.nan
 

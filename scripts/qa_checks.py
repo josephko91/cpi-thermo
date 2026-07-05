@@ -104,8 +104,8 @@ def _parse_args() -> argparse.Namespace:
                    default=ROOT / "figs" / f"qaqc_{today}",
                    help="Directory for plot outputs")
     p.add_argument("--checks", nargs="+", type=int,
-                   default=list(range(1, 9)),
-                   help="Which QC checks to run (1–8, default: all)")
+                   default=list(range(1, 10)),
+                   help="Which QC checks to run (1–9, default: all)")
     return p.parse_args()
 
 
@@ -1397,6 +1397,138 @@ def check_08_vertical_profiles(
 
 
 # ---------------------------------------------------------------------------
+# QC9 — LWC cross-check for severe Si supersaturation flags (IPHEX/OLYMPEX)
+# ---------------------------------------------------------------------------
+
+# Campaign-specific raw loader + candidate LWC columns (in priority order).
+# King hot-wire is preferred (robust, widely used reference instrument);
+# Nevzorov/CDP are fallbacks when King is unavailable for a given flight.
+_LWC_CROSSVAL_CAMPAIGNS = {
+    "IPHEX": {
+        "raw_dir": "IPHEX",
+        "pattern": "*.iphex",
+        "lwc_cols": ["King_LWC_ad", "Nev_LWC", "CDP_LWC", "CSI_CWC"],
+    },
+    "OLYMPEX": {
+        "raw_dir": "OLYMPEX",
+        "pattern": "*",
+        "lwc_cols": ["King_LWC_ad", "Nev_LWCcor", "CDP_LWC", "CSI_CWC"],
+    },
+}
+
+# Si above which a row is considered a "severe" supersaturation flag
+# (matches the ad hoc Si > 1.05 threshold used in scripts/full_diagnostic.py).
+SI_SEVERE_THRESHOLD = 1.05
+
+# Below this LWC (g/m^3), a severe Si flag is treated as a sensor-error
+# candidate rather than plausible in-cloud/rain contamination. Chosen as a
+# conservative floor above typical hot-wire probe noise floor (~0.01-0.02 g/m^3).
+LWC_INCLOUD_THRESHOLD = 0.05
+
+
+def check_09_lwc_crossval(
+    df: pd.DataFrame,
+    out_dir: Path,
+    figs_dir: Path,
+) -> dict:
+    """Cross-check severe Si>1.05 flags (IPHEX/OLYMPEX) against raw LWC data.
+
+    Si and qv computed from chilled-mirror/frost-point sensors can spike when
+    rain or cloud water contaminates the sensor. LWC isn't part of the
+    standard schema (QC-only per project decision), so this re-reads the raw
+    files for just the already-flagged rows and joins on (source_file,
+    Timestamp) to split the flags into plausible in-cloud/precip vs. likely
+    sensor error.
+    """
+    print("QC9: LWC cross-check for severe Si flags (IPHEX/OLYMPEX) ...")
+
+    from parsers.iphex import load_iphex_file
+    from parsers.olympex import load_olympex_file
+
+    loaders = {"IPHEX": load_iphex_file, "OLYMPEX": load_olympex_file}
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    result_rows = []
+    for camp, spec in _LWC_CROSSVAL_CAMPAIGNS.items():
+        if camp not in df["Campaign"].unique():
+            continue
+        sub = df[(df["Campaign"] == camp) & (df["Si"] > SI_SEVERE_THRESHOLD)]
+        if sub.empty:
+            continue
+
+        raw_dir = ROOT / "data" / "raw" / spec["raw_dir"]
+        for source_file, flagged in sub.groupby("source_file"):
+            fpath = raw_dir / source_file
+            if not fpath.exists():
+                print(f"  Warning: raw file not found for cross-check: {fpath}")
+                continue
+            try:
+                raw = loaders[camp](fpath)
+            except Exception as e:
+                print(f"  Warning: could not reload {source_file}: {e}")
+                continue
+            lwc_col = next((c for c in spec["lwc_cols"] if c in raw.columns), None)
+            if lwc_col is None or "Timestamp" not in raw.columns:
+                continue
+
+            raw_small = pd.DataFrame({
+                "Timestamp": raw["Timestamp"],
+                "LWC_gm3": pd.to_numeric(raw[lwc_col], errors="coerce"),
+                "lwc_source": lwc_col,
+            })
+            merged = flagged[["Timestamp", "Si"]].merge(raw_small, on="Timestamp", how="left")
+            merged["Campaign"] = camp
+            merged["source_file"] = source_file
+            result_rows.append(merged)
+
+    if not result_rows:
+        print("  No severe Si>1.05 flags found for IPHEX/OLYMPEX — nothing to cross-check.")
+        return {
+            "check_id": "QC9",
+            "check_name": "LWC cross-check (severe Si flags)",
+            "n_flags_total": 0,
+            "pct_dataset_flagged": 0.0,
+            "n_campaigns_affected": 0,
+            "notes": "No Si > 1.05 rows found for IPHEX/OLYMPEX in this dataset.",
+        }
+
+    result_df = pd.concat(result_rows, ignore_index=True)
+    result_df["likely_cause"] = np.where(
+        result_df["LWC_gm3"].notna() & (result_df["LWC_gm3"] > LWC_INCLOUD_THRESHOLD),
+        "in_cloud_or_precip",
+        "sensor_error_candidate",
+    )
+
+    out_path = out_dir / "09_lwc_crossval.csv"
+    result_df.to_csv(out_path, index=False)
+
+    n_total = len(result_df)
+    n_incloud = int((result_df["likely_cause"] == "in_cloud_or_precip").sum())
+    n_sensor = int((result_df["likely_cause"] == "sensor_error_candidate").sum())
+    n_no_lwc = int(result_df["LWC_gm3"].isna().sum())
+    n_camps = result_df["Campaign"].nunique()
+
+    print(f"  Saved {out_path}  ({n_total:,} severe Si>1.05 rows cross-checked)")
+    print(f"    in-cloud/precip (LWC > {LWC_INCLOUD_THRESHOLD} g/m³): {n_incloud:,}")
+    print(f"    sensor-error candidates (LWC ≤ {LWC_INCLOUD_THRESHOLD} g/m³ or missing): {n_sensor:,}")
+
+    return {
+        "check_id": "QC9",
+        "check_name": "LWC cross-check (severe Si flags)",
+        "n_flags_total": n_sensor,
+        "pct_dataset_flagged": round(n_sensor / len(df) * 100, 4) if len(df) else 0.0,
+        "n_campaigns_affected": n_camps,
+        "notes": (
+            f"Of {n_total:,} Si>{SI_SEVERE_THRESHOLD} rows (IPHEX/OLYMPEX), {n_incloud:,} "
+            f"have LWC>{LWC_INCLOUD_THRESHOLD} g/m³ (plausible in-cloud/precip contamination), "
+            f"{n_sensor:,} have LWC at/near zero or missing (sensor-error candidates); "
+            f"{n_no_lwc:,} rows had no LWC value available in the raw file."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Summary writer
 # ---------------------------------------------------------------------------
 
@@ -1436,6 +1568,7 @@ def main() -> None:
         6: check_06_coverage_audit,
         7: check_07_timestamps,
         8: check_08_vertical_profiles,
+        9: check_09_lwc_crossval,
     }
 
     results = []

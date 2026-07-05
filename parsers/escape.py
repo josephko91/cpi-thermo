@@ -300,17 +300,27 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
         bad_alt = (df[alt_col] < -500) | (df[alt_col] > 25000)
         df.loc[bad_alt, alt_col] = np.nan
 
-    # Temperature sensor failure: Tair > -20°C at altitude > 10 km is physically
-    # impossible (ISA at 10 km = -49.9°C; even the warmest real anomaly stays below
-    # -25°C in that layer).  Observed on 2022-06-10 where the Learjet's Tair sensor
-    # reported -7 to +12°C at 12–17 km, corrupting Si and qv for those rows.
-    # Threshold chosen conservatively: -20°C still flags the observed +12°C readings
-    # while leaving room for legitimate cold-season warm anomalies (e.g. sudden
-    # stratospheric warming events peak near -30°C at 10 km).
+    # Temperature sensor failure: |Tair - T_ISA| > 40°C is a gross physical
+    # failure at any altitude (same ISA formula/tolerance as QC2's
+    # T_altitude_inconsistent check in scripts/qa_checks.py, for consistency).
+    # Observed on 2022-06-10 where the Learjet's Tair sensor read +12 to
+    # +16°C from ~8 km up to 17 km, corrupting Si and qv for those rows.
+    # A fixed "Tair > -20°C at Alt > 10 km" threshold caught only the upper
+    # portion of this same failure — e.g. +15.7°C at ~8.1 km (P_hPa≈348, dev
+    # from ISA ≈ +54°C) drove qv to an unphysical ~278 g/kg but fell below
+    # the old 10 km cutoff. The ISA-deviation form catches the whole failure
+    # regardless of altitude.
     if temp_col and alt_col:
+        h_arr = np.asarray(df[alt_col], dtype=float)
+        t_isa_k = np.where(
+            h_arr <= 11000,
+            288.15 - 6.5e-3 * h_arr,
+            np.where(h_arr <= 20000, 216.65, 216.65 - 1e-3 * (h_arr - 20000)),
+        )
+        t_isa_c = t_isa_k - 273.15
         sensor_failure = (
             df[temp_col].notna() & df[alt_col].notna()
-            & (df[temp_col] > -20.0) & (df[alt_col] > 10_000.0)
+            & ((df[temp_col].to_numpy(dtype=float) - t_isa_c) > 40.0)
         )
         n_fail = int(sensor_failure.sum())
         if n_fail > 0:
@@ -318,8 +328,8 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
             if dew_col:
                 df.loc[sensor_failure, dew_col] = np.nan
             print(
-                f"  ESCAPE QC: nulled {n_fail:,} rows where Tair > -20°C at Alt > 10 km "
-                f"(temperature sensor failure — check source file)"
+                f"  ESCAPE QC: nulled {n_fail:,} rows where Tair exceeded ISA by "
+                f"> 40°C (temperature sensor failure — check source file)"
             )
 
     # Derived variables
@@ -356,6 +366,22 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
             226.32 * np.exp(-1.57688e-4 * (h_m - 11000)),
         )
         df["P_hPa"] = np.where(np.isfinite(h_m), p_icao, np.nan)
+        # A stuck/erroneous Palt reading can pass the generic [-500, 25000] m
+        # altitude bound above (line ~300) while still being unrealistic for
+        # this aircraft, producing implausible ICAO pressure. Bound the
+        # *derived* P_hPa the same way a direct pressure column already is
+        # (line ~291) and null the offending Palt/Alt_m too, since it's the
+        # source of the bad derivation.
+        bad_derived_p = (df["P_hPa"] < 50) | (df["P_hPa"] > 1100)
+        n_bad = int(bad_derived_p.sum())
+        if n_bad > 0:
+            df.loc[bad_derived_p, "P_hPa"] = np.nan
+            df.loc[bad_derived_p, alt_col] = np.nan
+            print(
+                f"  ESCAPE QC: nulled {n_bad:,} rows where ICAO-derived P_hPa from "
+                f"Palt fell outside [50, 1100] hPa (stuck/erroneous Palt sensor — "
+                f"check source file)"
+            )
     else:
         df["P_hPa"] = np.nan
     df["Lat"] = df[lat_col] if lat_col else np.nan

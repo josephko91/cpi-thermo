@@ -128,6 +128,72 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     return df[["Timestamp", "Lat", "Lon", "Alt_m"]]
 
 
+def load_np_file(filepath: Union[str, Path]) -> pd.DataFrame:
+    """
+    Load a single CRYSTAL-FACE NASA NP (WB-57F navigational data) file.
+
+    NP files are standard ICARTT-1001 records (barometric + GPS altitude,
+    INU + GPS lat/lon — 12 dependent variables) but, unlike the MMS-style
+    files handled by load_mms_file, their header never labels the
+    scale-factor/missing-value lines with "scale factors"/"missing values"
+    text. Parsed positionally per the ICARTT 1001 spec instead: after the
+    independent-variable description comes PNUM, then scale factors, then
+    missing values, then PNUM variable-description lines, then a special-
+    comment count/block, then a normal-comment count/block whose last line
+    is the column header row.
+    """
+    filepath = Path(filepath)
+
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    takeoff_date = extract_takeoff_date(lines)
+
+    n_header_lines = int(lines[0].split()[0])
+    pnum = int(lines[9].strip())
+    scales = [float(s) for s in lines[10].split()]
+    missing_vals = [float(m) for m in lines[11].split()]
+    n_scoml = int(lines[12 + pnum].strip())
+    n_ncoml_line_idx = 12 + pnum + 1 + n_scoml
+    n_ncoml = int(lines[n_ncoml_line_idx].strip())
+    header_row_idx = n_ncoml_line_idx + n_ncoml  # last normal comment = column header
+
+    columns = lines[header_row_idx].split()
+    if columns[1:] != ["baroalt", "iLat", "iLon", "gAlt", "gLat", "gLon",
+                       "TAS", "gSpd", "trkA", "T_Head", "Pitch", "Roll"]:
+        raise ValueError(f"Unexpected NP column layout in {filepath.name}: {columns}")
+
+    df = pd.read_csv(
+        filepath,
+        sep=r"\s+",
+        skiprows=n_header_lines,
+        names=columns,
+    )
+
+    if df.empty:
+        return df
+
+    dep_cols = columns[1:]
+    for i, col in enumerate(dep_cols):
+        if i < len(missing_vals):
+            df.loc[df[col] == missing_vals[i], col] = np.nan
+    for i, col in enumerate(dep_cols):
+        if i < len(scales) and scales[i] != 1.0:
+            df[col] = df[col] * scales[i]
+
+    df["Timestamp"] = df[columns[0]].apply(
+        lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
+    )
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    df["source_file"] = filepath.name
+
+    # Prefer barometric altitude/INU lat-lon: available from ground/taxi
+    # onward, whereas GPS lat/lon/alt can carry fill values before GPS lock.
+    df.rename(columns={"baroalt": "Alt_m", "iLat": "Lat", "iLon": "Lon"}, inplace=True)
+
+    return df[["Timestamp", "Lat", "Lon", "Alt_m"]]
+
+
 def load_hw_file(filepath: Union[str, Path]) -> pd.DataFrame:
     """
     Load a CRYSTAL-FACE Harvard Water Vapor (HW) file.
@@ -386,11 +452,23 @@ def load_crystal_face_nasa(
     # -----------------------------------------------------------------------
     campaign_root = data_dir.parent
 
-    # SP/ → GPS position (lat, lon, alt) for MMS geolocation
+    # NP/ → WB-57F navigational data (barometric + GPS altitude, INU + GPS
+    # lat/lon) for MMS geolocation.
+    # NOTE: SP/ was previously (mis)used here, but SP*.WB57 files are
+    # SPP-100 cloud-particle-probe data, not navigation — load_mms_file's
+    # header search never matches them, so every SP file failed silently
+    # and Alt_m/Lat/Lon stayed NaN for the whole campaign. NP/ has real
+    # position data on all 19 flights and uses a different ICARTT header
+    # layout, hence the separate load_np_file loader.
+    geo_loader = load_mms_file
     if mms_dir is None:
-        for candidate in (data_dir / "MMS", campaign_root / "SP"):
+        for candidate, loader in (
+            (data_dir / "MMS", load_mms_file),
+            (campaign_root / "NP", load_np_file),
+        ):
             if candidate.exists():
                 mms_dir = candidate
+                geo_loader = loader
                 break
     if mms_dir is not None:
         mms_dir = Path(mms_dir)
@@ -420,7 +498,7 @@ def load_crystal_face_nasa(
         nm_dir = Path(nm_dir)
 
     # -----------------------------------------------------------------------
-    # Load SP geolocation (position only)
+    # Load geolocation (position only)
     # -----------------------------------------------------------------------
     mms_geo = None
     if mms_dir is not None and mms_dir.exists():
@@ -429,9 +507,9 @@ def load_crystal_face_nasa(
             mms_dfs = []
             for f in sorted(mms_files):
                 try:
-                    mms_dfs.append(load_mms_file(f))
+                    mms_dfs.append(geo_loader(f))
                 except Exception as e:
-                    print(f"Warning: Could not load SP file {f.name}: {e}")
+                    print(f"Warning: Could not load geolocation file {f.name}: {e}")
             if mms_dfs:
                 mms_geo = pd.concat(mms_dfs, ignore_index=True)
 
@@ -556,7 +634,7 @@ def load_crystal_face_nasa(
 
     combined = pd.concat(dfs, ignore_index=True)
 
-    # Merge with SP geolocation on nearest timestamp
+    # Merge with geolocation on nearest timestamp
     if mms_geo is not None and not mms_geo.empty:
         combined = pd.merge_asof(
             combined.sort_values("Timestamp"),

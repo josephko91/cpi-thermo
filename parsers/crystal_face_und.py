@@ -100,10 +100,28 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
         Merged humidity and meteorology data with computed Si.
     """
     filepath_mis = Path(filepath_mis)
-    
+
     # Read MIS.CIT (humidity data)
     df_mis = _read_mis_cit_file(filepath_mis)
-    
+
+    # Find corresponding NAV.CIT file (POS_Lat, POS_Lon, POS_Alt — Applanix
+    # POS system). This campaign has no other altitude source, and NAV.CIT
+    # was never previously read, leaving Alt_m/Lat/Lon NaN for the whole
+    # campaign. Same ICARTT layout as MET.CIT, so the same reader applies.
+    nav_filename = filepath_mis.name.replace("MIS.CIT", "NAV.CIT")
+    nav_candidates = [
+        filepath_mis.parent / nav_filename,
+        filepath_mis.parent.parent / "ND_NAV" / nav_filename,
+    ]
+    nav_path = next((p for p in nav_candidates if p.exists()), None)
+    if nav_path is not None:
+        df_nav = _read_met_cit_file(nav_path)
+        nav_cols_to_merge = [
+            c for c in ("Timestamp", "POS_Lat", "POS_Lon", "POS_Alt") if c in df_nav.columns
+        ]
+        if len(nav_cols_to_merge) > 1:
+            df_mis = pd.merge(df_mis, df_nav[nav_cols_to_merge], on="Timestamp", how="left")
+
     # Find corresponding MET.CIT file.
     # When files are in instrument subdirectories (ND_MIS/ and ND_MET/), we must
     # also replace the directory name, not just the filename suffix.
@@ -113,7 +131,7 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
         filepath_mis.parent.parent / "ND_MET" / met_filename,  # sibling ND_MET/ subdir
     ]
     met_path = next((p for p in met_candidates if p.exists()), met_candidates[0])
-    
+
     if not met_path.exists():
         df_mis["Tair"] = np.nan
         if "RH" in df_mis.columns:
