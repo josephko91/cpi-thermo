@@ -40,6 +40,8 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
+from .utils import es_ice_hPa, qv_from_e_P, sw_from_si
+
 
 # ---------------------------------------------------------------------------
 # Invalid-value detection
@@ -236,13 +238,14 @@ def load_isdac_file(filepath: Union[str, Path]) -> pd.DataFrame:
         df.loc[(df["MasterLON"] < -180) | (df["MasterLON"] > 180), "MasterLON"] = np.nan
 
     # -------------------------------------------------------------------
-    # Si derivation: Si = ReHuI / 100 - 1
+    # Si derivation: Si_chilled_mirror = ReHuI / 100 - 1
     # -------------------------------------------------------------------
-    df["Si"] = df["ReHuI"] / 100.0 - 1.0
-    df.loc[~np.isfinite(df["Si"].to_numpy(dtype=float)), "Si"] = np.nan
+    df["Si_chilled_mirror"] = df["ReHuI"] / 100.0 - 1.0
+    df.loc[~np.isfinite(df["Si_chilled_mirror"].to_numpy(dtype=float)), "Si_chilled_mirror"] = np.nan
     # Physical plausibility: allow a slight margin beyond [-1, 1] for genuine
     # supersaturation extremes, but cap extreme outliers
-    df.loc[(df["Si"] < -1.0) | (df["Si"] > 5.0), "Si"] = np.nan
+    df.loc[(df["Si_chilled_mirror"] < -1.0) | (df["Si_chilled_mirror"] > 5.0), "Si_chilled_mirror"] = np.nan
+    df["Si"] = df["Si_chilled_mirror"]
 
     # -------------------------------------------------------------------
     # Build UTC timestamps from HH / MM / SS columns
@@ -327,11 +330,29 @@ def extract_isdac_standard(df: pd.DataFrame) -> pd.DataFrame:
     -------
     Timestamp, Tair_C, Si, Lat, Lon, Alt_m, Campaign, source_file
     """
+    # qv_chilled_mirror from ReHuI (RH w.r.t. ice) + T + NPres
+    rehi = df.get("ReHuI")
+    rstem = df.get("RSTem")
+    npres = df.get("NPres")
+    if rehi is not None and rstem is not None and npres is not None:
+        e_cm = (np.asarray(rehi, dtype=float) / 100.0) * es_ice_hPa(rstem)
+        qv_cm = qv_from_e_P(e_cm, npres)
+    else:
+        qv_cm = np.nan
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("RSTem", np.nan))
+
     return pd.DataFrame(
         {
             "Timestamp": df.get("Timestamp", pd.NaT),
             "Tair_C": df.get("RSTem", np.nan),
+            "P_hPa": df.get("NPres", np.nan),
             "Si": df.get("Si", np.nan),
+            "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
+            "qv": qv_cm,
+            "qv_chilled_mirror": qv_cm,
+            "Sw": sw,
             "Lat": df.get("MastrLAT", np.nan),
             "Lon": df.get("MasterLON", np.nan),
             "Alt_m": df.get("PreAlt", np.nan),

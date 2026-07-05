@@ -26,7 +26,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from .utils import clean_column_name, si_from_frost_point, COMMON_NA_VALUES
+from .utils import clean_column_name, si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si, COMMON_NA_VALUES
 
 
 ESCAPE_FILE_RE = re.compile(r"ESCAPE-Page0_Learjet_(\d{8})_R\d+\.ict$", re.IGNORECASE)
@@ -262,6 +262,10 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
     dew_col = _choose_column(df, ["Dew", "DewPoint", "Dew_Point", "Td"])
     pres_col = _choose_column(df, ["Pressure", "Pres", "P", "Static_Pressure", "P_hPa"])
     alt_col = _choose_column(df, ["Palt", "Alt", "Altitude", "GPS_Alt", "Press_Alt"])
+    # Prevent the soft-contains search from matching a pressure altitude column
+    # (e.g. "Palt" matches "p") as a direct static-pressure column.
+    if pres_col is not None and pres_col == alt_col:
+        pres_col = None
     lat_col = _choose_column(df, ["Lat", "Latitude", "GPS_Lat"])
     lon_col = _choose_column(df, ["Long", "Lon", "Longitude", "GPS_Lon"])
     time_col = _choose_column(df, ["Time_Start", "Time", "UTC", "Time_UTC"])
@@ -298,12 +302,13 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
 
     # Derived variables
     if dew_col and temp_col:
-        df["Si"] = si_from_frost_point(df[dew_col], df[temp_col])
+        df["Si_chilled_mirror"] = si_from_frost_point(df[dew_col], df[temp_col])
         # Plausibility: Si < -1 is impossible; very high values likely artifacts.
-        bad_si = (df["Si"] < -1) | (df["Si"] > 5)
-        df.loc[bad_si, "Si"] = np.nan
+        bad_si = (df["Si_chilled_mirror"] < -1) | (df["Si_chilled_mirror"] > 5)
+        df.loc[bad_si, "Si_chilled_mirror"] = np.nan
     else:
-        df["Si"] = np.nan
+        df["Si_chilled_mirror"] = np.nan
+    df["Si"] = df["Si_chilled_mirror"]
 
     # Timestamp from flight date + seconds
     flight_date = _extract_flight_date(filepath.name, metadata)
@@ -315,6 +320,22 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
 
     # Canonical convenience columns
     df["T_C"] = df[temp_col] if temp_col else np.nan
+
+    # Pressure: use direct column if available; otherwise derive from pressure
+    # altitude (Palt, already normalised to metres by _normalize_altitude_m)
+    # via the ICAO standard atmosphere — exact by definition.
+    if pres_col:
+        df["P_hPa"] = df[pres_col].copy()
+    elif alt_col and "palt" in alt_col.lower():
+        h_m = np.asarray(df[alt_col], dtype=float)  # metres after normalisation
+        p_icao = np.where(
+            h_m <= 11000,
+            1013.25 * (1.0 - 2.25577e-5 * h_m) ** 5.25588,
+            226.32 * np.exp(-1.57688e-4 * (h_m - 11000)),
+        )
+        df["P_hPa"] = np.where(np.isfinite(h_m), p_icao, np.nan)
+    else:
+        df["P_hPa"] = np.nan
     df["Lat"] = df[lat_col] if lat_col else np.nan
     df["Lon"] = df[lon_col] if lon_col else np.nan
     df["Alt_m"] = df[alt_col] if alt_col else np.nan
@@ -348,10 +369,32 @@ def load_escape(data_dir: Union[str, Path], pattern: str = "ESCAPE-Page0_Learjet
 
 def extract_escape_standard(df: pd.DataFrame) -> pd.DataFrame:
     """Extract standardized columns for downstream campaign combination."""
+    # qv_chilled_mirror from dew/frost point + pressure
+    # The loader uses si_from_frost_point(dew_col, temp_col) → treat dew_col as frost point
+    # Find the dew-point column via Si_chilled_mirror: recompute e = es_ice(Td)
+    # We don't re-detect dew_col here; derive e from Si_cm and T instead:
+    #   Si_cm = e/es_ice(T) - 1  → e = (Si_cm + 1) * es_ice(T)
+    si_cm = df.get("Si_chilled_mirror")
+    t_c = df.get("T_C")
+    p_hpa = df.get("P_hPa")
+    if si_cm is not None and t_c is not None and p_hpa is not None:
+        e_cm = (np.asarray(si_cm, dtype=float) + 1.0) * es_ice_hPa(t_c)
+        qv_cm = qv_from_e_P(e_cm, p_hpa)
+    else:
+        qv_cm = np.nan
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("T_C", np.nan))
+
     return pd.DataFrame({
         "Timestamp": df.get("Timestamp", pd.NaT),
         "Tair_C": df.get("T_C", np.nan),
+        "P_hPa": df.get("P_hPa", np.nan),
         "Si": df.get("Si", np.nan),
+        "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
+        "qv": qv_cm,
+        "qv_chilled_mirror": qv_cm,
+        "Sw": sw,
         "Lat": df.get("Lat", np.nan),
         "Lon": df.get("Lon", np.nan),
         "Alt_m": df.get("Alt_m", np.nan),

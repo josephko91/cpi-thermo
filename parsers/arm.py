@@ -17,7 +17,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Union, List, Optional
 
-from .utils import si_from_frost_point
+from .utils import si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si
 
 
 # Column definitions for ARM binary files
@@ -127,11 +127,21 @@ def load_arm_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["Timestamp"] = df["Date"] + pd.to_timedelta(df["Time_sec"], unit="s")
     df["Timestamp"] = df["Timestamp"].dt.tz_localize("UTC")
     
-    # Calculate ice supersaturation
-    df["Si"] = si_from_frost_point(
-        df["Frost_Point_Cryo_C"], 
-        df["Air_Temp_Rosemount_C"]
+    # Calculate ice supersaturation (cryo chilled mirror)
+    df["Si_chilled_mirror"] = si_from_frost_point(
+        df["Frost_Point_Cryo_C"],
+        df["Air_Temp_Rosemount_C"],
     )
+    df["Si"] = df["Si_chilled_mirror"]
+
+    # Water vapor mixing ratio (g/kg) from frost point + static pressure
+    df["P_hPa"] = df["Static_Pressure_mb"]  # mb == hPa
+    e_cm = es_ice_hPa(df["Frost_Point_Cryo_C"])
+    df["qv_chilled_mirror"] = qv_from_e_P(e_cm, df["P_hPa"])
+    df["qv"] = df["qv_chilled_mirror"]
+
+    # Supersaturation w.r.t. liquid water
+    df["Sw"] = sw_from_si(df["Si"], df["Air_Temp_Rosemount_C"])
     
     # Add source file tracking
     df["source_file"] = filepath.name
@@ -192,7 +202,12 @@ def extract_arm_standard(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df["Air_Temp_Rosemount_C"],
+        "P_hPa": df.get("P_hPa", np.nan),
         "Si": df["Si"],
+        "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
+        "qv": df.get("qv", np.nan),
+        "qv_chilled_mirror": df.get("qv_chilled_mirror", np.nan),
+        "Sw": df.get("Sw", np.nan),
         "Lat": df["GPS_Lat_deg"],
         "Lon": df["GPS_Lon_deg"],
         "Alt_m": df["GPS_Alt_m"],

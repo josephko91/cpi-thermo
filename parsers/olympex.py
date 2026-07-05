@@ -18,6 +18,9 @@ from typing import Union
 from .utils import (
     extract_takeoff_date,
     si_from_frost_point,
+    es_ice_hPa,
+    qv_from_e_P,
+    sw_from_si,
     COMMON_NA_VALUES,
 )
 
@@ -75,9 +78,10 @@ def load_olympex_file(filepath: Union[str, Path]) -> pd.DataFrame:
         )
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
     
-    # Calculate Si from frost point
+    # Calculate Si from frost point (instrument unspecified)
     if "FrostPoint" in df.columns and "Air_Temp" in df.columns:
-        df["Si"] = si_from_frost_point(df["FrostPoint"], df["Air_Temp"])
+        df["Si_frost_point"] = si_from_frost_point(df["FrostPoint"], df["Air_Temp"])
+        df["Si"] = df["Si_frost_point"]
     
     return df
 
@@ -134,10 +138,27 @@ def extract_olympex_standard(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Standardized data with Timestamp, Tair_C, Si, Lat, Lon, Alt_m, Campaign.
     """
+    # qv_frost_point from FrostPoint + STATIC_PR
+    fp = df.get("FrostPoint")
+    p_hpa = df.get("STATIC_PR")
+    if fp is not None and p_hpa is not None:
+        e_fp = es_ice_hPa(fp)
+        qv_fp = qv_from_e_P(e_fp, p_hpa)
+    else:
+        qv_fp = np.nan
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("Air_Temp", np.nan))
+
     return pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df.get("Air_Temp", np.nan),
+        "P_hPa": df.get("STATIC_PR", np.nan),
         "Si": df.get("Si", np.nan),
+        "Si_frost_point": df.get("Si_frost_point", np.nan),
+        "qv": qv_fp,
+        "qv_frost_point": qv_fp,
+        "Sw": sw,
         "Lat": df.get("POS_Lat", np.nan),
         "Lon": df.get("POS_Lon", np.nan),
         "Alt_m": df.get("POS_Alt", np.nan),

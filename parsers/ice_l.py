@@ -55,7 +55,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from .utils import si_from_rh, si_from_ppmv
+from .utils import si_from_rh, si_from_ppmv, es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si
 
 
 ICE_L_FILE_RE = re.compile(
@@ -268,8 +268,7 @@ def load_ice_l_file(
             }
         )
 
-        df["Si_best"] = _resolve_si_best(df, h2o_ranking)
-        df["Si"] = df["Si_best"]
+        df["Si"] = _resolve_si_best(df, h2o_ranking)
 
         if "Timestamp" in df.columns:
             df = df.sort_values("Timestamp", kind="stable").reset_index(drop=True)
@@ -336,14 +335,42 @@ def load_ice_l(
 
 def extract_ice_l_standard(df: pd.DataFrame) -> pd.DataFrame:
     """Extract standardised columns for combined campaign output."""
+    # qv_chilled_mirror from RHUM + T + P
+    rhum = df.get("RHUM")
+    t_c = df.get("ATX_C")
+    p = df.get("PSXC_hPa")
+    if rhum is not None and t_c is not None and p is not None:
+        e_cm = (np.asarray(rhum, dtype=float) / 100.0) * es_ice_hPa(t_c)
+        qv_cm = qv_from_e_P(e_cm, np.asarray(p, dtype=float))
+    else:
+        qv_cm = np.nan
+
+    # qv_mrtdl from MRTDLL_MC_ppmv
+    mrtdl = df.get("MRTDLL_MC_ppmv")
+    qv_mrtdl = qv_from_ppmv(np.asarray(mrtdl, dtype=float)) if mrtdl is not None else np.nan
+
+    # qv = best (chilled mirror first, then MRTDL) — matches default h2o_ranking
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src in (qv_cm, qv_mrtdl):
+        arr = src if isinstance(src, pd.Series) else pd.Series(src, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("ATX_C", np.nan))
+
     return pd.DataFrame(
         {
             "Timestamp":         df.get("Timestamp",         pd.NaT),
             "Tair_C":            df.get("ATX_C",             np.nan),
+            "P_hPa":             df.get("PSXC_hPa",          np.nan),
             "Si":                df.get("Si",                np.nan),
-            "Si_best":           df.get("Si_best",           np.nan),
             "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
             "Si_MRTDL":          df.get("Si_MRTDL",          np.nan),
+            "qv":                qv,
+            "qv_chilled_mirror": qv_cm,
+            "qv_mrtdl":          qv_mrtdl,
+            "Sw":                sw,
             "MRTDLL_MC_ppmv":    df.get("MRTDLL_MC_ppmv",   np.nan),
             "Lat":               df.get("Lat",               np.nan),
             "Lon":               df.get("Lon",               np.nan),

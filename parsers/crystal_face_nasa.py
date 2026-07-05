@@ -22,6 +22,10 @@ from .utils import (
     extract_takeoff_date,
     si_from_rh,
     si_from_ppmv,
+    es_ice_hPa,
+    qv_from_ppmv,
+    qv_from_e_P,
+    sw_from_si,
 )
 
 
@@ -280,11 +284,11 @@ def load_crystal_face_nasa_file(filepath: Union[str, Path]) -> pd.DataFrame:
     )
     df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
     
-    # Calculate Si from RH (relative humidity w.r.t. ice)
-    # JLH files typically have RH or %RH column
+    # Calculate Si from RH (relative humidity w.r.t. ice) — JLH instrument
     rh_col = next((c for c in df.columns if "rh" in c.lower()), None)
     if rh_col:
-        df["Si"] = si_from_rh(df[rh_col])
+        df["Si_JLH"] = si_from_rh(df[rh_col])
+        df["RH_JLH"] = df[rh_col]  # store for qv_jlh computation later
     
     # Convert temperature from Kelvin to Celsius if present
     temp_col = next((c for c in df.columns if c.lower() in ["t_k", "t"]), None)
@@ -534,7 +538,9 @@ def load_crystal_face_nasa(
                     ] = np.nan
                 # Also derive T_C from MM for HW rows
                 hw_mm["T_C_HW"] = hw_mm["T_K"] - 273.15
-                hw_si = hw_mm[["Timestamp", "Si_HW", "T_C_HW"]].dropna(subset=["Si_HW"])
+                # qv_hw from ppmv (no pressure needed)
+                hw_mm["qv_hw"] = qv_from_ppmv(hw_mm["H2O_ppmv"])
+                hw_si = hw_mm[["Timestamp", "Si_HW", "T_C_HW", "qv_hw"]].dropna(subset=["Si_HW"])
                 print(f"  HW Si: {len(hw_si):,} valid records across "
                       f"{hw_si['Timestamp'].dt.date.nunique()} dates")
 
@@ -588,8 +594,9 @@ def load_crystal_face_nasa(
             # These are dates (e.g. Jul 29) with no JLH data at all
             hw_extra_std = pd.DataFrame({
                 "Timestamp": hw_extra["Timestamp"],
-                "Si": hw_extra["Si_HW"],
+                "Si_HW": hw_extra["Si_HW"],
                 "T_C": hw_extra["T_C_HW"],
+                "qv_hw": hw_extra.get("qv_hw", np.nan),
                 "source_file": "HW-fallback",
             })
             if mms_geo is not None and not mms_geo.empty:
@@ -632,8 +639,9 @@ def load_crystal_face_nasa(
             if not hw_in_gaps.empty:
                 hw_gap_std = pd.DataFrame({
                     "Timestamp": hw_in_gaps["Timestamp"],
-                    "Si": hw_in_gaps["Si_HW"],
+                    "Si_HW": hw_in_gaps["Si_HW"],
                     "T_C": hw_in_gaps["T_C_HW"],
+                    "qv_hw": hw_in_gaps.get("qv_hw", np.nan),
                     "source_file": "HW-gap-fill",
                 })
                 if mms_geo is not None and not mms_geo.empty:
@@ -648,6 +656,62 @@ def load_crystal_face_nasa(
                 print(f"  HW gap-fill: added {len(hw_gap_std):,} rows for JLH gaps on shared dates")
 
     combined["Timestamp"] = _round_timestamp_to_second(combined["Timestamp"])
+
+    # Merge Si_HW (and qv_hw) into JLH rows that don't already have it
+    hw_merge_cols = ["Timestamp", "Si_HW", "qv_hw"]
+    if hw_si is not None and not hw_si.empty:
+        available_hw_cols = [c for c in hw_merge_cols if c in hw_si.columns]
+        if "Si_HW" not in combined.columns:
+            combined = pd.merge_asof(
+                combined.sort_values("Timestamp"),
+                hw_si[available_hw_cols].sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=30),
+            )
+        else:
+            drop_cols = [c for c in available_hw_cols if c != "Timestamp" and c in combined.columns]
+            tmp = pd.merge_asof(
+                combined.sort_values("Timestamp").drop(columns=drop_cols),
+                hw_si[available_hw_cols].sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=30),
+            )
+            combined = tmp
+
+    # Merge P_hPa from met data into combined for qv_jlh computation
+    if tp_met is not None:
+        p_data = tp_met[["Timestamp", "P_hPa"]].dropna(subset=["P_hPa"]).sort_values("Timestamp")
+        if not p_data.empty:
+            if "P_hPa" not in combined.columns:
+                combined = pd.merge_asof(
+                    combined.sort_values("Timestamp"),
+                    p_data,
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=60),
+                )
+            else:
+                tmp_p = pd.merge_asof(
+                    combined.sort_values("Timestamp").drop(columns=["P_hPa"]),
+                    p_data,
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=60),
+                )
+                combined = tmp_p
+
+    # ALIAS instrument not available in loaded data
+    combined["Si_ALIAS"] = np.nan
+
+    # Si = best from h2o_ranking: JLH first, then HW, then ALIAS
+    combined["Si"] = np.nan
+    for si_col in ("Si_JLH", "Si_HW", "Si_ALIAS"):
+        if si_col in combined.columns:
+            mask = combined["Si"].isna() & combined[si_col].notna()
+            combined.loc[mask, "Si"] = combined.loc[mask, si_col]
+
     combined["Campaign"] = "CRYSTAL-FACE-NASA"
 
     return combined
@@ -675,10 +739,41 @@ def extract_crystal_face_nasa_standard(df: pd.DataFrame) -> pd.DataFrame:
     lon_col = "Lon" if "Lon" in df.columns else next((c for c in df.columns if "lon" in c.lower()), None)
     alt_col = "Alt_m" if "Alt_m" in df.columns else next((c for c in df.columns if "alt" in c.lower() or "z" in c.lower()), None)
     
+    # qv_jlh from RH + T + P (all merged into combined)
+    rh_jlh = df.get("RH_JLH")
+    t_c = df.get("T_C")
+    p_hpa = df.get("P_hPa")
+    if rh_jlh is not None and t_c is not None and p_hpa is not None:
+        e_jlh = (np.asarray(rh_jlh, dtype=float) / 100.0) * es_ice_hPa(t_c)
+        qv_jlh = qv_from_e_P(e_jlh, p_hpa)
+    else:
+        qv_jlh = np.nan
+
+    qv_hw = df.get("qv_hw", np.nan)
+
+    # qv = best: jlh first, then hw
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src in (qv_jlh, qv_hw):
+        arr = src if isinstance(src, pd.Series) else pd.Series(src, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T
+    si_arr = df.get("Si", np.nan)
+    sw = sw_from_si(si_arr, t_c) if t_c is not None else np.nan
+
     result = pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df.get("T_C", np.nan),
+        "P_hPa": df.get("P_hPa", np.nan),
         "Si": df.get("Si", np.nan),
+        "Si_JLH": df.get("Si_JLH", np.nan),
+        "Si_HW": df.get("Si_HW", np.nan),
+        "Si_ALIAS": df.get("Si_ALIAS", np.nan),
+        "qv": qv,
+        "qv_jlh": qv_jlh if isinstance(qv_jlh, pd.Series) else np.nan,
+        "qv_hw": df.get("qv_hw", np.nan),
+        "Sw": sw if isinstance(sw, (pd.Series, np.ndarray)) else np.nan,
         "Lat": df.get(lat_col, np.nan) if lat_col else np.nan,
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,

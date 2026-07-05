@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Union, Dict, List, Optional
 from collections import defaultdict
 
-from .utils import normalize_datetime_utc, si_from_ppmv
+from .utils import normalize_datetime_utc, si_from_ppmv, qv_from_ppmv, sw_from_si
 
 
 # ---------------------------------------------------------------------------
@@ -492,18 +492,15 @@ def load_attrex(
                 print(f"  Masking {extreme.sum():,} extreme {si_col} values (|Si| > 10)")
                 df.loc[extreme, si_col] = np.nan
 
-    # --- Si_best: fill from ranking ---
+    # --- Si: fill from ranking ---
     ranking = h2o_ranking if h2o_ranking is not None else _DEFAULT_H2O_RANKING
-    df["Si_best"] = np.nan
+    df["Si"] = np.nan
     for inst_key in ranking:
         si_col = _si_col_map.get(inst_key.upper().replace("-H2O", ""))
         if si_col and si_col in df.columns:
-            mask = df["Si_best"].isna() & df[si_col].notna()
-            df.loc[mask, "Si_best"] = df.loc[mask, si_col]
-    print(f"  Si_best ranking: {ranking}")
-
-    # Si kept for backward compatibility
-    df["Si"] = df["Si_best"]
+            mask = df["Si"].isna() & df[si_col].notna()
+            df.loc[mask, "Si"] = df.loc[mask, si_col]
+    print(f"  Si ranking: {ranking}")
 
     # --- temperature in Celsius ---
     if "T" in df.columns:
@@ -553,14 +550,34 @@ def extract_attrex_standard(df: pd.DataFrame) -> pd.DataFrame:
     def _get(col):
         return df[col] if col in df.columns else np.nan
 
+    # qv from ppmv for each instrument (no P needed)
+    qv_dlh  = qv_from_ppmv(_get("H2O_DLH_ppmv"))  if "H2O_DLH_ppmv"  in df.columns else np.nan
+    qv_noaa = qv_from_ppmv(_get("H2O_NOAA_ppmv")) if "H2O_NOAA_ppmv" in df.columns else np.nan
+    qv_ucats = qv_from_ppmv(_get("H2O_UCATS_ppmv")) if "H2O_UCATS_ppmv" in df.columns else np.nan
+
+    # qv = best from same ranking as Si
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src in (qv_dlh, qv_noaa, qv_ucats):
+        arr = src if isinstance(src, pd.Series) else pd.Series(src, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T
+    sw = sw_from_si(_get("Si"), _get("T_C"))
+
     return pd.DataFrame({
         "Timestamp": df.get("Timestamp", pd.NaT),
         "Tair_C": df.get("T_C", np.nan),
-        "Si": _get("Si_best"),
-        "Si_best": _get("Si_best"),
+        "P_hPa": df.get("P", np.nan),
+        "Si": _get("Si"),
         "Si_DLH": _get("Si_DLH"),
         "Si_NOAA": _get("Si_NOAA"),
         "Si_UCATS": _get("Si_UCATS"),
+        "qv": qv,
+        "qv_dlh": qv_dlh,
+        "qv_noaa": qv_noaa,
+        "qv_ucats": qv_ucats,
+        "Sw": sw,
         "H2O_DLH_ppmv": _get("H2O_DLH_ppmv"),
         "H2O_NOAA_ppmv": _get("H2O_NOAA_ppmv"),
         "H2O_UCATS_ppmv": _get("H2O_UCATS_ppmv"),

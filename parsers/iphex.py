@@ -51,6 +51,8 @@ from typing import List, Optional, Union
 import numpy as np
 import pandas as pd
 
+from .utils import es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si
+
 
 IPHEX_INVALID_VALUES = {
     999999.9999,
@@ -109,7 +111,7 @@ def _compute_si_from_ppmv(
 
 
 def _resolve_si_best(df: pd.DataFrame, h2o_ranking: List[str]) -> pd.Series:
-    source_col = {"chilled-mirror": "Si_chilled_mirror", "ophir-tdl": "Si_TDL"}
+    source_col = {"chilled-mirror": "Si_chilled_mirror", "ophir-tdl": "Si_ophir_tdl"}
     si_best = pd.Series(np.nan, index=df.index)
     for source in h2o_ranking:
         col = source_col.get(source)
@@ -293,11 +295,10 @@ def load_iphex_file(
         mr = _coerce_and_mask(df["MixingRatio"])
         mr = mr.where((mr >= _TDL_PPMV_MIN) & (mr <= _TDL_PPMV_MAX), np.nan)
         df["MixingRatio_ppmv"] = mr
-        df["Si_TDL"] = _compute_si_from_ppmv(mr, df["Air_Temp"], df["STATIC_PR"])
-        df.loc[(df["Si_TDL"] < -1.0) | (df["Si_TDL"] > 5.0), "Si_TDL"] = np.nan
+        df["Si_ophir_tdl"] = _compute_si_from_ppmv(mr, df["Air_Temp"], df["STATIC_PR"])
+        df.loc[(df["Si_ophir_tdl"] < -1.0) | (df["Si_ophir_tdl"] > 5.0), "Si_ophir_tdl"] = np.nan
 
-    df["Si_best"] = _resolve_si_best(df, h2o_ranking)
-    df["Si"] = df["Si_best"]
+    df["Si"] = _resolve_si_best(df, h2o_ranking)
 
     # Timestamps: Time column is seconds-since-midnight on the flight date
     base_date = _extract_date_from_filename(filepath)
@@ -363,14 +364,41 @@ def load_iphex(
 
 def extract_iphex_standard(df: pd.DataFrame) -> pd.DataFrame:
     """Return standardized columns for combined campaign output."""
+    # qv_chilled_mirror from FrostPoint + STATIC_PR
+    fp = df.get("FrostPoint")
+    p = df.get("STATIC_PR")
+    if fp is not None and p is not None:
+        e_cm = es_ice_hPa(np.asarray(fp, dtype=float))
+        qv_cm = qv_from_e_P(e_cm, np.asarray(p, dtype=float))
+    else:
+        qv_cm = np.nan
+
+    # qv_ophir_tdl from MixingRatio_ppmv
+    mr_ppmv = df.get("MixingRatio_ppmv")
+    qv_otdl = qv_from_ppmv(np.asarray(mr_ppmv, dtype=float)) if mr_ppmv is not None else np.nan
+
+    # qv = best (chilled mirror first, then ophir)
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src in (qv_cm, qv_otdl):
+        arr = src if isinstance(src, pd.Series) else pd.Series(src, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("Air_Temp", np.nan))
+
     return pd.DataFrame(
         {
             "Timestamp": df.get("Timestamp", pd.NaT),
             "Tair_C": df.get("Air_Temp", np.nan),
+            "P_hPa": df.get("STATIC_PR", np.nan),
             "Si": df.get("Si", np.nan),
-            "Si_best": df.get("Si_best", np.nan),
             "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
-            "Si_TDL": df.get("Si_TDL", np.nan),
+            "Si_ophir_tdl": df.get("Si_ophir_tdl", np.nan),
+            "qv": qv,
+            "qv_chilled_mirror": qv_cm,
+            "qv_ophir_tdl": qv_otdl,
+            "Sw": sw,
             "MixingRatio_ppmv": df.get("MixingRatio_ppmv", np.nan),
             "Lat": df.get("POS_Lat", np.nan),
             "Lon": df.get("POS_Lon", np.nan),

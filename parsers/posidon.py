@@ -47,6 +47,8 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
+from .utils import qv_from_ppmv, sw_from_si
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -283,8 +285,9 @@ def load_posidon(
         e = (ppmv / 1e6) * P
         si.loc[valid] = (e / e_s) - 1
 
-    # Clip to physically meaningful range
-    combined["Si"] = si.clip(-1.0, 1.0)
+    # Clip to physically meaningful range — DLH primary instrument
+    combined["Si_DLH"] = si.clip(-1.0, 1.0)
+    combined["Si"] = combined["Si_DLH"]
 
     return combined
 
@@ -313,10 +316,22 @@ def extract_posidon_standard(
     out["Tair_C"] = out["Tair_K"] - 273.15 if "T_K" in df.columns else np.nan
 
     # Pressure
-    out["Pressure_hPa"] = df.get("P_hPa", np.nan)
+    out["P_hPa"] = df.get("P_hPa", np.nan)
 
     # Supersaturation
     out["Si"] = df.get("Si", np.nan)
+    out["Si_DLH"] = df.get("Si_DLH", np.nan)
+
+    # qv_dlh from DLH ppmv (no pressure needed)
+    dlh_col = "DLH-H2O_H2O_ppmv"
+    if dlh_col in df.columns:
+        out["qv_dlh"] = qv_from_ppmv(df[dlh_col])
+    else:
+        out["qv_dlh"] = np.nan
+    out["qv"] = out["qv_dlh"]
+
+    # Sw from Si and T
+    out["Sw"] = sw_from_si(out["Si"], out["Tair_C"])
 
     # Position
     out["Lat"]   = df.get("MMS-1HZ_G_LAT",  np.nan) * COEF_LAT

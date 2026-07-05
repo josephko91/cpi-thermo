@@ -16,6 +16,9 @@ from .utils import (
     clean_column_name,
     extract_takeoff_date,
     si_from_frost_point,
+    es_ice_hPa,
+    qv_from_e_P,
+    sw_from_si,
     COMMON_NA_VALUES,
 )
 
@@ -60,9 +63,10 @@ def load_mc3e_file(filepath: Union[str, Path]) -> pd.DataFrame:
         )
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
     
-    # Calculate Si from frost point (preferred method for MC3E)
+    # Calculate Si from frost point — DLH instrument
     if "FrostPoint" in df.columns and "Air_Temp" in df.columns:
-        df["Si"] = si_from_frost_point(df["FrostPoint"], df["Air_Temp"])
+        df["Si_DLH"] = si_from_frost_point(df["FrostPoint"], df["Air_Temp"])
+        df["Si"] = df["Si_DLH"]
     
     return df
 
@@ -124,10 +128,39 @@ def extract_mc3e_standard(df: pd.DataFrame) -> pd.DataFrame:
     lon_col = next((c for c in df.columns if "lon" in c.lower()), None)
     alt_col = next((c for c in df.columns if "alt" in c.lower()), None)
     
+    # Find pressure column
+    pres_col = next(
+        (c for c in df.columns if c.lower() in ("static_pr", "staticpressure", "p_hpa", "pressure", "pres")),
+        None,
+    )
+    if pres_col is None:
+        pres_col = next(
+            (c for c in df.columns if "press" in c.lower() or "static" in c.lower()),
+            None,
+        )
+    p_hpa = df[pres_col] if pres_col else np.nan
+
+    # qv_dlh from frost point + pressure (DLH measures frost point in MC3E)
+    fp = df.get("FrostPoint")
+    tair = df.get("Air_Temp")
+    if fp is not None and pres_col is not None:
+        e_dlh = es_ice_hPa(fp)
+        qv_dlh = qv_from_e_P(e_dlh, p_hpa)
+    else:
+        qv_dlh = np.nan
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("Air_Temp", np.nan))
+
     return pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df.get("Air_Temp", np.nan),
+        "P_hPa": p_hpa,
         "Si": df.get("Si", np.nan),
+        "Si_DLH": df.get("Si_DLH", np.nan),
+        "qv": qv_dlh,
+        "qv_dlh": qv_dlh,
+        "Sw": sw,
         "Lat": df.get(lat_col, np.nan) if lat_col else np.nan,
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,

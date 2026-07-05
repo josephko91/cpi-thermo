@@ -55,7 +55,7 @@ from typing import Dict, List, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import si_from_ppmv
+from .utils import si_from_ppmv, qv_from_ppmv, sw_from_si
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +583,12 @@ def load_macpex(
     ] = np.nan
 
     # ------------------------------------------------------------------
-    # 7. Optional Si for alternate water-vapor sources
+    # 6b. Expose primary source as its named instrument column
+    # ------------------------------------------------------------------
+    df[f"Si_{wv_source}"] = df["Si"]
+
+    # ------------------------------------------------------------------
+    # 7. Compute Si for alternate water-vapor sources
     # ------------------------------------------------------------------
     for src, alt_col in alt_wv_cols.items():
         if alt_col is None:
@@ -604,6 +609,22 @@ def load_macpex(
                 f"  Also computed {si_col} using {alt_col} "
                 f"({alt_valid.sum():,} valid rows)"
             )
+
+    # FISH instrument not loaded; create NaN placeholder
+    df["Si_FISH"] = np.nan
+
+    # ------------------------------------------------------------------
+    # 7b. Si = best from h2o_ranking
+    # ------------------------------------------------------------------
+    ranking = h2o_ranking or list(H2O_RANK_TO_WV.keys())
+    df["Si"] = np.nan
+    for rank in ranking:
+        wv_key = H2O_RANK_TO_WV.get(rank)
+        si_col = f"Si_{wv_key}" if wv_key else None
+        if si_col and si_col in df.columns:
+            mask = df["Si"].isna() & df[si_col].notna()
+            df.loc[mask, "Si"] = df.loc[mask, si_col]
+    print(f"  Si ranking applied: {ranking}")
 
     # ------------------------------------------------------------------
     # 8. Derived/convenience columns
@@ -658,21 +679,42 @@ def extract_macpex_standard(df: pd.DataFrame) -> pd.DataFrame:
     else:
         source = pd.Series("", index=df.index)
 
-    # Cascade Si through available sources: primary (whichever wv_source was used)
-    # is already in "Si"; fill remaining NaN from alternate Si columns.
-    # Order: HWV (14 flights) → JLH (11 flights) → DLH (5 flights).
-    si = df["Si"].copy() if "Si" in df.columns else pd.Series(np.nan, index=df.index)
-    for si_fallback in ("Si_HWV", "Si_JLH", "Si_DLH"):
-        if si_fallback in df.columns:
-            si = si.fillna(df[si_fallback])
+    # qv per instrument from ppmv columns (all three instruments output ppmv)
+    hwv_col = _find_col(df, WV_SOURCE_COLS["HWV"])
+    dlh_col = _find_col(df, WV_SOURCE_COLS["DLH"])
+    jlh_col = _find_col(df, WV_SOURCE_COLS["JLH"])
+
+    qv_hwv = qv_from_ppmv(df[hwv_col]) if hwv_col else np.nan
+    qv_dlh = qv_from_ppmv(df[dlh_col]) if dlh_col else np.nan
+    qv_jlh = qv_from_ppmv(df[jlh_col]) if jlh_col else np.nan
+
+    # qv = best from ranking order (HWV → DLH → JLH, matching H2O_RANK_TO_WV)
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src_arr in (qv_hwv, qv_dlh, qv_jlh):
+        arr = src_arr if isinstance(src_arr, pd.Series) else pd.Series(src_arr, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T_C
+    sw = sw_from_si(df.get("Si", np.nan), df.get("T_C", np.nan))
 
     return pd.DataFrame({
-        "Timestamp": df.get("Timestamp", pd.NaT),
-        "Tair_C":    df.get("T_C", np.nan),
-        "Si":        si,
-        "Lat":       df[lat_col] if lat_col else np.nan,
-        "Lon":       df[lon_col] if lon_col else np.nan,
-        "Alt_m":     df[alt_col] if alt_col else np.nan,
-        "Campaign":  df.get("Campaign", "MACPEX"),
+        "Timestamp":  df.get("Timestamp", pd.NaT),
+        "Tair_C":     df.get("T_C", np.nan),
+        "P_hPa":      df.get("P_hPa", np.nan),
+        "Si":         df.get("Si", np.nan),
+        "Si_HWV":     df.get("Si_HWV", np.nan),
+        "Si_DLH":     df.get("Si_DLH", np.nan),
+        "Si_JLH":     df.get("Si_JLH", np.nan),
+        "Si_FISH":    df.get("Si_FISH", np.nan),
+        "qv":         qv,
+        "qv_hwv":     qv_hwv,
+        "qv_dlh":     qv_dlh,
+        "qv_jlh":     qv_jlh,
+        "Sw":         sw,
+        "Lat":        df[lat_col] if lat_col else np.nan,
+        "Lon":        df[lon_col] if lon_col else np.nan,
+        "Alt_m":      df[alt_col] if alt_col else np.nan,
+        "Campaign":   df.get("Campaign", "MACPEX"),
         "source_file": source,
     })
