@@ -296,6 +296,33 @@ def check_02_internal_consistency(
     flag_rows = []
 
     # ── Sub-check A: qv > qv_sat_liq ─────────────────────────────────────────
+    # Two severity tiers are used rather than a single threshold:
+    #
+    #   MILD   (1.05 < ratio ≤ 1.20) — chilled-mirror instruments measure at
+    #     liquid saturation (not the ice frost point) while in cloud, causing
+    #     qv to approach qv_sat_liq.  Instrument thermal lag and droplet
+    #     flooding can push the reported value 5–20% above saturation for
+    #     seconds to minutes.  This is a known artifact of chilled-mirror
+    #     sensors in precipitation campaigns (IPHEX, MC3E, OLYMPEX, ICE-L,
+    #     ARM) and should be annotated rather than discarded.
+    #
+    #   SEVERE (ratio > 1.20) — exceedances this large cannot be explained by
+    #     instrument lag alone.  Root causes include sensor malfunction, unit
+    #     conversion errors, or pressure/temperature inconsistencies.  These
+    #     should be treated as suspect data.
+    #
+    # Both tiers are written to the flag CSV so that downstream users can
+    # apply their own threshold.  The summary reports them separately.
+    MILD_THRESHOLD   = 1.05
+    SEVERE_THRESHOLD = 1.20
+
+    # Campaigns that fly primarily through cloud / precipitation — mild
+    # exceedances are physically expected for these.
+    IN_CLOUD_CAMPAIGNS = {
+        "ARM", "IPHEX", "MC3E", "OLYMPEX", "ICE-L",
+        "CRYSTAL-FACE-UND", "CRYSTAL-FACE-NASA",
+    }
+
     has_vars = work[["Tair_C", "P_hPa", "qv"]].notna().all(axis=1)
     sub_a = work[has_vars].copy()
     es_liq = es_liq_hPa(sub_a["Tair_C"].values)
@@ -304,11 +331,18 @@ def check_02_internal_consistency(
     sub_a["qv_sat_liq"] = qv_sat
     sub_a["qv_ratio"]   = sub_a["qv"] / sub_a["qv_sat_liq"]
 
-    mask_a = sub_a["qv_ratio"] > 1.05  # 5% margin
+    mask_a = sub_a["qv_ratio"] > MILD_THRESHOLD
     flagged_a = sub_a[mask_a].copy()
     flagged_a["check_type"] = "qv_exceeds_saturation"
+    # Severity tier label
+    flagged_a["severity"] = np.where(
+        flagged_a["qv_ratio"] > SEVERE_THRESHOLD, "severe", "mild"
+    )
+    # Expected-in-cloud annotation
+    flagged_a["in_cloud_campaign"] = flagged_a["Campaign"].isin(IN_CLOUD_CAMPAIGNS)
     flag_rows.append(flagged_a[["Campaign", "Timestamp", "source_file",
-                                 "check_type", "Tair_C", "P_hPa", "qv",
+                                 "check_type", "severity", "in_cloud_campaign",
+                                 "Tair_C", "P_hPa", "qv",
                                  "qv_sat_liq", "qv_ratio"]])
 
     # ── Sub-check B: T vs altitude (ICAO lapse rate) ─────────────────────────
@@ -343,13 +377,21 @@ def check_02_internal_consistency(
         sub_ct = flags[flags["check_type"] == ct] if len(flags) else pd.DataFrame()
         for camp in campaigns:
             n_camp = len(df[df["Campaign"] == camp])
-            n_flag = len(sub_ct[sub_ct["Campaign"] == camp]) if len(sub_ct) else 0
+            sub_camp = sub_ct[sub_ct["Campaign"] == camp] if len(sub_ct) else pd.DataFrame()
+            n_flag = len(sub_camp)
+            n_mild   = int((sub_camp.get("severity", pd.Series()) == "mild").sum())  if len(sub_camp) else 0
+            n_severe = int((sub_camp.get("severity", pd.Series()) == "severe").sum()) if len(sub_camp) else 0
+            in_cloud = camp in IN_CLOUD_CAMPAIGNS if ct == "qv_exceeds_saturation" else False
             summary_rows.append({
-                "check_type": ct,
-                "Campaign": camp,
-                "n_records": n_camp,
-                "n_flagged": n_flag,
-                "pct_flagged": round(n_flag / n_camp * 100, 4) if n_camp else 0.0,
+                "check_type":       ct,
+                "Campaign":         camp,
+                "in_cloud_campaign": in_cloud,
+                "n_records":        n_camp,
+                "n_flagged":        n_flag,
+                "n_mild":           n_mild,
+                "n_severe":         n_severe,
+                "pct_flagged":      round(n_flag / n_camp * 100, 4) if n_camp else 0.0,
+                "pct_severe":       round(n_severe / n_camp * 100, 4) if n_camp else 0.0,
             })
     summary_df = pd.DataFrame(summary_rows)
 
@@ -357,7 +399,9 @@ def check_02_internal_consistency(
     summary_path = out_dir / "02_consistency_summary.csv"
     flags.to_csv(flags_path, index=False)
     summary_df.to_csv(summary_path, index=False)
-    print(f"  Saved {flags_path}  ({len(flags):,} flagged rows)")
+    n_severe_total = int((flags.get("severity", pd.Series()) == "severe").sum()) if len(flags) else 0
+    n_mild_total   = int((flags.get("severity", pd.Series()) == "mild").sum())   if len(flags) else 0
+    print(f"  Saved {flags_path}  ({len(flags):,} flagged rows: {n_mild_total:,} mild, {n_severe_total:,} severe)")
     print(f"  Saved {summary_path}")
 
     # ── Plot A: qv / qv_sat_liq vs pressure, coloured by campaign ─────────────
@@ -374,19 +418,24 @@ def check_02_internal_consistency(
                 sub = sub.sample(5000, random_state=42)
             ax.scatter(sub["qv_ratio"], sub["P_hPa"], s=1.5, alpha=0.3,
                        color=color, rasterized=True)
-            ax.axvline(1.05, color="red", lw=1.0, ls="--")
+            ax.axvline(MILD_THRESHOLD,   color="orange", lw=1.0, ls="--")
+            ax.axvline(SEVERE_THRESHOLD, color="red",    lw=1.0, ls="-")
             ax.set_xlim(0, 3)
             ax.set_ylim(1050, 50)
             ax.set_xlabel("qv / qv_sat_liq", fontsize=7)
             ax.set_ylabel("P (hPa)", fontsize=7)
-            ax.set_title(camp, fontsize=8, fontweight="bold", color=color, pad=3)
+            in_cloud_label = " [cloud]" if camp in IN_CLOUD_CAMPAIGNS else ""
+            ax.set_title(camp + in_cloud_label, fontsize=8, fontweight="bold", color=color, pad=3)
             ax.tick_params(labelsize=7)
-            n_flag = int(mask_a[sub_a["Campaign"] == camp].sum())
-            ax.text(0.97, 0.05, f"n_flag={n_flag:,}", transform=ax.transAxes,
-                    ha="right", va="bottom", fontsize=6, color="red")
+            n_mild_c   = int(((flagged_a["Campaign"] == camp) & (flagged_a["severity"] == "mild")).sum())
+            n_severe_c = int(((flagged_a["Campaign"] == camp) & (flagged_a["severity"] == "severe")).sum())
+            ax.text(0.97, 0.05,
+                    f"mild={n_mild_c:,}\nsevere={n_severe_c:,}",
+                    transform=ax.transAxes, ha="right", va="bottom", fontsize=6, color="red")
         for ax in axes_flat[len(campaigns):]:
             ax.set_visible(False)
-        fig.suptitle("QC2a — qv / qv_sat_liq vs pressure\n(red dashed = 1.05 threshold; points right of line are flagged)",
+        fig.suptitle("QC2a — qv / qv_sat_liq vs pressure\n"
+                     "orange dashed = 1.05 (mild); red solid = 1.20 (severe); [cloud] = in-cloud campaign",
                      fontsize=10, fontweight="bold", y=1.01)
         out_a = figs_dir / "02a_qv_vs_qvsat.png"
         fig.savefig(out_a, dpi=150, bbox_inches="tight")
@@ -435,15 +484,24 @@ def check_02_internal_consistency(
         plt.close(fig)
         print(f"  Saved {out_b}")
 
-    n_flags = len(flags)
-    n_camps = flags["Campaign"].nunique() if n_flags else 0
+    n_flags  = len(flags)
+    n_severe = int((flags.get("severity", pd.Series()) == "severe").sum()) if n_flags else 0
+    n_mild   = int((flags.get("severity", pd.Series()) == "mild").sum())   if n_flags else 0
+    n_camps  = flags["Campaign"].nunique() if n_flags else 0
     return {
         "check_id": "QC2",
         "check_name": "Internal consistency",
         "n_flags_total": n_flags,
+        "n_flags_mild": n_mild,
+        "n_flags_severe": n_severe,
         "pct_dataset_flagged": round(n_flags / n_total * 100, 4) if n_total else 0,
+        "pct_severe": round(n_severe / n_total * 100, 4) if n_total else 0,
         "n_campaigns_affected": n_camps,
-        "notes": "qv>1.05*qv_sat_liq OR |Tair_C − T_ISA| > 40°C at given altitude",
+        "notes": (
+            f"qv: mild={MILD_THRESHOLD}×qv_sat (in-cloud instrument physics expected); "
+            f"severe={SEVERE_THRESHOLD}×qv_sat (suspect data); "
+            "T: |Tair_C − T_ISA| > 40°C"
+        ),
     }
 
 
