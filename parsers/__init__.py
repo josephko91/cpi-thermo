@@ -7,9 +7,14 @@ measurements from various field campaigns.
 
 from .utils import (
     es_ice,
+    es_ice_hPa,
+    es_liq_hPa,
     si_from_frost_point,
     si_from_ppmv,
     si_from_rh,
+    qv_from_ppmv,
+    qv_from_e_P,
+    sw_from_si,
     clean_column_name,
     parse_columns_with_units,
     extract_takeoff_date,
@@ -51,9 +56,14 @@ CAMPAIGN_LOADERS = {
 __all__ = [
     # Utility functions
     "es_ice",
+    "es_ice_hPa",
+    "es_liq_hPa",
     "si_from_frost_point",
     "si_from_ppmv",
     "si_from_rh",
+    "qv_from_ppmv",
+    "qv_from_e_P",
+    "sw_from_si",
     "clean_column_name",
     "parse_columns_with_units",
     "extract_takeoff_date",
