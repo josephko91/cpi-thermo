@@ -240,11 +240,14 @@ def load_ice_l_file(
         # ---- Position ------------------------------------------------------
         lat_name = _pick_var(ds, ["LAT", "LATC", "GGLAT"])
         lon_name = _pick_var(ds, ["LON", "LONC", "GGLON"])
-        alt_name = _pick_var(ds, ["PALTF", "GGALT", "ALT", "PALT"])
+        # Prefer m-native columns over PALTF (feet); convert feet if fallback needed
+        alt_name = _pick_var(ds, ["GGALT", "ALT", "PALT", "PALTF"])
 
         lat   = _match_length(_to_float_1d(ds[lat_name].values), n) if lat_name else np.full(n, np.nan)
         lon   = _match_length(_to_float_1d(ds[lon_name].values), n) if lon_name else np.full(n, np.nan)
         alt_m = _match_length(_to_float_1d(ds[alt_name].values), n) if alt_name else np.full(n, np.nan)
+        if alt_name and ds[alt_name].attrs.get("units", "").lower() in ("feet", "ft", "foot"):
+            alt_m = alt_m * 0.3048
 
         lat[(lat < -90) | (lat > 90)]           = np.nan
         lon[(lon < -180) | (lon > 180)]         = np.nan
