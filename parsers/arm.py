@@ -237,19 +237,41 @@ def load_arm_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # are a few hundred meters at most (median 55 m across this campaign);
     # 1000 m is a generous margin that only catches genuine GPS glitches.
     ALT_AGREEMENT_TOLERANCE_M = 1000.0
-    gps_alt_valid = (
-        df["GPS_Alt_m"].notna()
-        & (df["GPS_Alt_m"] > 0)
+    gps_alt_present = df["GPS_Alt_m"].notna() & (df["GPS_Alt_m"] > 0)
+    gps_alt_agrees = (
+        gps_alt_present
         & df["Pressure_Altitude_m"].notna()
         & ((df["GPS_Alt_m"] - df["Pressure_Altitude_m"]).abs() <= ALT_AGREEMENT_TOLERANCE_M)
     )
+
+    # A frozen GPS receiver can hold the SAME whole-meter altitude for
+    # minutes while the aircraft keeps climbing/descending on
+    # Pressure_Altitude_m -- and can still be within the tolerance above at
+    # the start of the freeze, before the two diverge enough to be caught by
+    # it (e.g. citation.0312001649: GPS_Alt_m frozen at exactly 8926 m for
+    # 727 samples/~3 min while Pressure_Altitude_m smoothly descends from
+    # 8828 m to 7782 m -- only the back half of that run exceeded the 1000 m
+    # tolerance). Detect runs of GPS_Alt_m repeating a bit-exact value for
+    # >=30 consecutive samples (matching qa_checks.py QC3's own stuck-sensor
+    # threshold) and treat the whole run as invalid regardless of momentary
+    # agreement with Pressure_Altitude_m.
+    STUCK_RUN_LENGTH = 30
+    run_id = (df["GPS_Alt_m"] != df["GPS_Alt_m"].shift()).cumsum()
+    run_len = run_id.map(run_id.value_counts())
+    gps_alt_stuck = gps_alt_present & (run_len >= STUCK_RUN_LENGTH)
+
+    gps_alt_valid = gps_alt_agrees & ~gps_alt_stuck
     df["Alt_m"] = np.where(gps_alt_valid, df["GPS_Alt_m"], df["Pressure_Altitude_m"])
-    n_gps_rejected = int(
-        (df["GPS_Alt_m"].notna() & (df["GPS_Alt_m"] > 0) & ~gps_alt_valid).sum()
-    )
-    if n_gps_rejected:
-        print(f"  ARM QC: fell back to Pressure_Altitude_m for {n_gps_rejected:,} rows "
+
+    n_gps_disagreed = int((gps_alt_present & ~gps_alt_agrees & ~gps_alt_stuck).sum())
+    n_gps_stuck = int((gps_alt_present & gps_alt_stuck).sum())
+    if n_gps_disagreed:
+        print(f"  ARM QC: fell back to Pressure_Altitude_m for {n_gps_disagreed:,} rows "
               f"where GPS_Alt_m disagreed by >{ALT_AGREEMENT_TOLERANCE_M:.0f} m "
+              f"({filepath.name})")
+    if n_gps_stuck:
+        print(f"  ARM QC: fell back to Pressure_Altitude_m for {n_gps_stuck:,} rows "
+              f"where GPS_Alt_m was frozen for >={STUCK_RUN_LENGTH} consecutive samples "
               f"({filepath.name})")
 
     # Add source file tracking

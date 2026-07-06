@@ -78,7 +78,30 @@ def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
 
         lat = np.asarray(ds.get("LAT", ds.get("LATC", [np.nan] * len(times)))).ravel()
         lon = np.asarray(ds.get("LON", ds.get("LONC", [np.nan] * len(times)))).ravel()
-        alt = np.asarray(ds.get("ALT", ds.get("GGALT", [np.nan] * len(times)))).ravel()
+
+        # ALT (IRS Baro-Inertial Altitude) is preferred when valid, but the
+        # inertial system can drop to exactly 0.0 for extended periods (up to
+        # 4,413 of 33,444 samples / ~68 minutes in RF09) -- an INS
+        # alignment/dropout artifact, not a real reading of sea level for
+        # over an hour of flight. ds.get()'s fallback only triggers when a
+        # key is entirely absent, so it never engages here since ALT is
+        # present (just sometimes invalid) in every file. GPS-derived GGALT
+        # is far more reliable across the whole campaign (at most 7 zero
+        # samples in any single file, vs. up to 4,413 for ALT), so fall back
+        # to it per-sample whenever ALT reads exactly 0.0.
+        alt_irs  = np.asarray(ds.get("ALT",   [np.nan] * len(times))).ravel().astype(float)
+        alt_gps  = np.asarray(ds.get("GGALT", [np.nan] * len(times))).ravel().astype(float)
+        if alt_irs.size and alt_gps.size:
+            alt_invalid = alt_irs == 0.0
+            n_alt_invalid = int(alt_invalid.sum())
+            alt = np.where(alt_invalid, alt_gps, alt_irs)
+            if n_alt_invalid:
+                print(f"  AIRS-II QC: fell back to GGALT for {n_alt_invalid:,} rows "
+                      f"where ALT (IRS) read exactly 0.0 ({filepath.name})")
+        elif alt_irs.size:
+            alt = alt_irs
+        else:
+            alt = alt_gps
         
         # Apply same mask to position/pressure data
         if len(pres_raw) == len(valid_mask):
