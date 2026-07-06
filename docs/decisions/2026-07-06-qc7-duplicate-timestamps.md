@@ -1,6 +1,6 @@
 # 2026-07-06 — QC7 duplicate-timestamp investigation
 
-## Fix applied in commit: (pending — CRYSTAL-FACE-NASA banker's-rounding bug)
+## Fix applied in commit: ee1a933 (CRYSTAL-FACE-NASA banker's-rounding bug)
 
 ## What we found
 
