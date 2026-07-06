@@ -1258,18 +1258,6 @@ def check_08_vertical_profiles(
             T_K = 216.65
         return T_K - 273.15
 
-    T_isa_ref = [_icao_T_from_P(pc) for pc in P_CENTERS]
-
-    # Saturation qv at ISA temperature for each pressure center
-    qv_sat_ref = []
-    for pc, Tc in zip(P_CENTERS, T_isa_ref):
-        if np.isnan(Tc):
-            qv_sat_ref.append(np.nan)
-            continue
-        es = float(es_ice_hPa(np.array([Tc]))[0])
-        denom = pc - es
-        qv_sat_ref.append(0.622 * es / denom * 1000 if denom > 0 else np.nan)
-
     df2 = df.copy()
     df2["P_hPa"]  = pd.to_numeric(df2["P_hPa"],  errors="coerce")
     df2["Tair_C"] = pd.to_numeric(df2["Tair_C"], errors="coerce")
@@ -1289,14 +1277,31 @@ def check_08_vertical_profiles(
             pc      = (p_lo + p_hi) / 2
 
             T_isa = _icao_T_from_P(pc)
-            es_pc = float(es_ice_hPa(np.array([T_isa]))[0]) if not np.isnan(T_isa) else np.nan
-            denom = pc - es_pc
-            qv_sat_pc = 0.622 * es_pc / denom * 1000 if (denom > 0 and not np.isnan(es_pc)) else np.nan
 
             T_mean = float(bin_sub["Tair_C"].mean()) if n_bin else np.nan
             T_std  = float(bin_sub["Tair_C"].std())  if n_bin else np.nan
             qv_mean= float(bin_sub["qv"].mean())     if n_bin else np.nan
             qv_std = float(bin_sub["qv"].std())      if n_bin else np.nan
+
+            # Saturation reference for the qv_exceeds_saturation check: use
+            # the bin's own OBSERVED mean temperature and the LIQUID
+            # saturation formula (matching QC2's row-level check), not the
+            # ISA theoretical temperature with the ICE formula. Real
+            # near-surface/lower-troposphere air is routinely warmer than
+            # the ISA standard atmosphere, and ice saturation vapor pressure
+            # is always <= liquid at the same temperature -- combining both
+            # systematically underestimated the true reference and produced
+            # widespread false positives (verified: 41 of 47 originally
+            # flagged bins no longer exceed saturation once corrected).
+            # T_isa is still used for the separate T_deviation_from_ISA
+            # check below and for the T_isa_C/T_dev_C profile columns, where
+            # comparing against the ISA reference is the intended check.
+            if not np.isnan(T_mean):
+                es_pc = float(es_liq_hPa(np.array([T_mean]))[0])
+                denom = pc - es_pc
+                qv_sat_pc = 0.622 * es_pc / denom * 1000 if denom > 0 else np.nan
+            else:
+                qv_sat_pc = np.nan
 
             row = {
                 "Campaign": camp,
