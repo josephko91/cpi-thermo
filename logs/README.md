@@ -31,11 +31,14 @@ none of it is version-controlled.
   `scripts/summarize_parser_recommendations.py`, which reads
   `campaign_missingness/latest/` by default to print a ranked parser-fix backlog.
 
-- **`campaign_tests/<campaign>/`** — output of the one-off per-campaign deep-dive
-  scripts in `scripts/tests/` (currently `test_attrex.py`, `test_ice_l.py`,
-  `test_iphex.py`). *Not* timestamped — these are debug artifacts for a single
-  campaign's parser, regenerated (overwritten) each time you re-run that test,
-  not a "pipeline run" you'd want history for.
+- **`campaign_tests/<campaign>/<YYYYMMDD_HHMMSS>/`** — output of the one-off
+  per-campaign deep-dive scripts in `scripts/tests/` (currently
+  `test_attrex.py`, `test_ice_l.py`, `test_iphex.py`). Timestamped like
+  everything else since 2026-07-06 (with a `latest` symlink), but the
+  directory is created lazily inside the test function that writes to it
+  (`test_write_diagnostics`/`test_generate_figures`) rather than at module
+  import time — so just collecting the test file (e.g.
+  `pytest --collect-only`) doesn't spam empty run folders.
 
 - **`archive/`** — everything that existed before the 2026-07-06 reorg
   (undated `diagnostics/` dumps that used to be shared by multiple unrelated
@@ -45,9 +48,10 @@ none of it is version-controlled.
 ## The `latest` symlink
 
 Each timestamped bucket (`pipeline/`, `qaqc/`, `cpi_fusion/`,
-`campaign_missingness/`) keeps a `latest` symlink pointing at its newest run,
-e.g. `logs/qaqc/latest -> 20260706_134049/`. Use it when you just want the most
-recent results without knowing the exact timestamp:
+`campaign_missingness/`, `campaign_tests/<campaign>/`) keeps a `latest`
+symlink pointing at its newest run, e.g. `logs/qaqc/latest -> 20260706_134049/`.
+Use it when you just want the most recent results without knowing the exact
+timestamp:
 
 ```bash
 cat logs/cpi_fusion/latest/cpi_fusion_report.txt

@@ -99,13 +99,20 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 
 | Script | Logs | Figs |
 |--------|------|------|
-| `main.py` | `logs/pipeline/<ts>/` (output.log + campaign/Si/qv coverage CSVs) | `figs/all-campaigns/<ts>/` (via `plot_all_campaigns.py`) |
+| `main.py` | `logs/pipeline/<ts>/` (output.log + campaign/Si/qv coverage CSVs) | `figs/all-campaigns/<ts>/` (via `plot_all_campaigns.py`, plots 01–12) |
 | `scripts/qa_checks.py` | `logs/qaqc/<ts>/` (00–09 CSVs) | `figs/qaqc/<ts>/` |
 | `scripts/diagnose_cpi_fusion.py` | `logs/cpi_fusion/<ts>/` | `figs/cpi_fusion/<ts>/` |
 | `scripts/diagnose_campaign_missingness.py` | `logs/campaign_missingness/<ts>/` | — |
 | `scripts/summarize_parser_recommendations.py` | reads `logs/campaign_missingness/latest/` by default | — |
-| `scripts/full_diagnostic.py` | — | `figs/full_diagnostic/<ts>/` |
-| `scripts/tests/test_{attrex,ice_l,iphex}.py` | `logs/campaign_tests/<campaign>/` (stable, overwritten each run — not a "pipeline" run) | `figs/campaign_tests/<campaign>/` |
+| `scripts/full_diagnostic.py` | — (console-only: variable stats, availability table, known-issue checks) | — |
+| `scripts/tests/test_{attrex,ice_l,iphex}.py` | `logs/campaign_tests/<campaign>/<ts>/` | `figs/campaign_tests/<campaign>/<ts>/` |
+
+`scripts/full_diagnostic.py` used to also write its own `figs/full_diagnostic/`
+figures, but 4 of its 6 distributions plus its Si-vs-Tair scatter duplicated
+`plot_all_campaigns.py`'s plots 01/02/03/07/08; the 3 genuinely unique ones
+(Alt_m distribution, Sw distribution, Alt_m-vs-Tair scatter) were folded into
+`plot_all_campaigns.py` as plots 10–12 on 2026-07-06, and `full_diagnostic.py`
+is now console-output only.
 
 Pre-reorg content (from before 2026-07-06) was preserved under `logs/archive/`
 and `figs/archive/`, and old date-only snapshots (`qaqc_20260630/`, etc.) were

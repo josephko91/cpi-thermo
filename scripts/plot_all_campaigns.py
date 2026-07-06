@@ -10,6 +10,12 @@ kept pointing at the newest run):
   04_data_availability.png       — flight-day availability matrix
   05_summary_boxplots.png        — Si + Tair box plots across campaigns
   06_si_instrument_coverage.png  — heatmap of per-instrument Si fill rates per campaign
+  07_pressure_distributions.png  — P_hPa KDE per campaign, faceted grid
+  08_qv_distributions.png        — qv KDE per campaign, faceted grid
+  09_qv_instrument_coverage.png  — heatmap of per-instrument qv fill rates per campaign
+  10_alt_distributions.png       — Alt_m histogram per campaign, faceted grid
+  11_sw_distributions.png        — Sw histogram per campaign, faceted grid
+  12_alt_vs_tair_scatter.png     — Alt_m vs Tair_C scatter, all campaigns overlaid
 
 Usage (standalone):
   python scripts/plot_all_campaigns.py
@@ -832,6 +838,143 @@ if qv_inst_cols:
         print(f"  Saved {out}")
 else:
     print("  Skipped (no qv instrument columns present in dataset)")
+
+
+# ---------------------------------------------------------------------------
+# 10. Alt_m distributions — KDE per campaign
+# ---------------------------------------------------------------------------
+print("Plot 10: Alt_m distributions ...")
+if "Alt_m" in env.columns:
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(NROWS, NCOLS, figsize=(14, NROWS * 2.6),
+                                 constrained_layout=True)
+        axes_flat = axes.flat
+
+        alt_lo, alt_hi = -200.0, 16000.0
+        x = np.linspace(alt_lo, alt_hi, 500)
+        for i, camp in enumerate(campaigns):
+            ax = axes_flat[i]
+            data = env.loc[env["Campaign"] == camp, "Alt_m"].dropna()
+            color = COLORS[camp]
+
+            if len(data) > 10:
+                try:
+                    d = data.clip(alt_lo, alt_hi).values
+                    y = _kde(d, x)
+                    ax.fill_between(x, y, alpha=0.35, color=color)
+                    ax.plot(x, y, color=color, lw=1.5)
+                except Exception:
+                    ax.hist(data.clip(alt_lo, alt_hi), bins=60, density=True,
+                            color=color, alpha=0.6)
+            else:
+                ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
+                        ha="center", va="center", fontsize=8, color="0.5")
+
+            ax.set_xlim(alt_lo, alt_hi)
+            ax.set_title(camp, fontsize=8, fontweight="bold", color=color, pad=3)
+            ax.set_xlabel("Alt_m (m)", fontsize=7)
+            ax.set_ylabel("density", fontsize=7)
+            ax.tick_params(labelsize=7)
+
+            med = data.median() if len(data) > 0 else np.nan
+            n_valid = len(data)
+            med_str = f"{med:.0f}" if np.isfinite(med) else "—"
+            ax.text(0.97, 0.92, f"n={n_valid:,}\nmed={med_str} m",
+                    transform=ax.transAxes, ha="right", va="top",
+                    fontsize=6.5, color="0.35")
+
+        hide_unused(axes_flat, len(campaigns))
+        fig.suptitle("Altitude distributions — all campaigns", fontsize=11,
+                     fontweight="bold", y=1.01)
+        out = OUT_DIR / "10_alt_distributions.png"
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved {out}")
+else:
+    print("  Skipped (Alt_m column not present in dataset)")
+
+
+# ---------------------------------------------------------------------------
+# 11. Sw distributions — KDE per campaign
+# ---------------------------------------------------------------------------
+print("Plot 11: Sw distributions ...")
+if "Sw" in env.columns:
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(NROWS, NCOLS, figsize=(14, NROWS * 2.6),
+                                 constrained_layout=True)
+        axes_flat = axes.flat
+
+        sw_lo, sw_hi = -0.5, 1.0
+        x = np.linspace(sw_lo, sw_hi, 400)
+        for i, camp in enumerate(campaigns):
+            ax = axes_flat[i]
+            data = env.loc[env["Campaign"] == camp, "Sw"].dropna()
+            color = COLORS[camp]
+
+            if len(data) > 10:
+                try:
+                    d = data.clip(sw_lo, sw_hi).values
+                    y = _kde(d, x)
+                    ax.fill_between(x, y, alpha=0.35, color=color)
+                    ax.plot(x, y, color=color, lw=1.5)
+                except Exception:
+                    ax.hist(data.clip(sw_lo, sw_hi), bins=60, density=True,
+                            color=color, alpha=0.6)
+            else:
+                ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
+                        ha="center", va="center", fontsize=8, color="0.5")
+
+            ax.axvline(0, color="k", lw=0.8, ls="--", alpha=0.5)
+            ax.set_xlim(sw_lo, sw_hi)
+            ax.set_title(camp, fontsize=8, fontweight="bold", color=color, pad=3)
+            ax.set_xlabel("Sw", fontsize=7)
+            ax.set_ylabel("density", fontsize=7)
+            ax.tick_params(labelsize=7)
+
+            med = data.median() if len(data) > 0 else np.nan
+            n_valid = len(data)
+            med_str = f"{med:.3f}" if np.isfinite(med) else "—"
+            ax.text(0.97, 0.92, f"n={n_valid:,}\nmed={med_str}",
+                    transform=ax.transAxes, ha="right", va="top",
+                    fontsize=6.5, color="0.35")
+
+        hide_unused(axes_flat, len(campaigns))
+        fig.suptitle("Liquid supersaturation (Sw) distributions — all campaigns",
+                     fontsize=11, fontweight="bold", y=1.01)
+        out = OUT_DIR / "11_sw_distributions.png"
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved {out}")
+else:
+    print("  Skipped (Sw column not present in dataset)")
+
+
+# ---------------------------------------------------------------------------
+# 12. Alt_m vs Tair_C — all campaigns overlaid scatter
+# ---------------------------------------------------------------------------
+print("Plot 12: Alt_m vs Tair_C scatter ...")
+if "Alt_m" in env.columns:
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(9, 6))
+        for camp in reversed(campaigns):  # bottom layers first
+            sub = env[env["Campaign"] == camp].dropna(subset=["Alt_m", "Tair_C"])
+            if sub.empty:
+                continue
+            ax.scatter(sub["Tair_C"], sub["Alt_m"], s=0.3, alpha=0.15,
+                       color=COLORS[camp], label=camp, rasterized=True)
+
+        ax.set_xlabel("Air Temperature (°C)", fontsize=10)
+        ax.set_ylabel("Altitude (m)", fontsize=10)
+        ax.set_title("Altitude vs temperature — all campaigns", fontsize=11,
+                     fontweight="bold")
+        ax.legend(fontsize=7, ncol=2, loc="upper right", framealpha=0.9,
+                  markerscale=8, scatterpoints=1)
+        out = OUT_DIR / "12_alt_vs_tair_scatter.png"
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved {out}")
+else:
+    print("  Skipped (Alt_m column not present in dataset)")
 
 
 update_latest(OUT_DIR.parent, OUT_DIR)

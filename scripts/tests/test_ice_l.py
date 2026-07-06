@@ -31,13 +31,16 @@ import pytest
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 DATA_DIR = REPO_ROOT / "data/raw/ICE-L/nav-state-microphysics"
-DIAG_DIR = REPO_ROOT / "logs/campaign_tests/ice_l"
-FIGS_DIR = REPO_ROOT / "figs/campaign_tests/ice_l"
-
-DIAG_DIR.mkdir(parents=True, exist_ok=True)
-FIGS_DIR.mkdir(parents=True, exist_ok=True)
+# Timestamped so re-running this test doesn't overwrite a previous run's
+# diagnostics/figures; latest symlink kept pointing at the newest one.
+# Directories are created lazily inside the writing tests (not here at
+# module level) so importing/collecting this file has no filesystem effects.
+_RUN_TS = _run_timestamp()
+DIAG_DIR = REPO_ROOT / "logs/campaign_tests/ice_l" / _RUN_TS
+FIGS_DIR = REPO_ROOT / "figs/campaign_tests/ice_l" / _RUN_TS
 
 # MRTDLL_MC is stored in ppmv despite the netCDF attribute reading "gram/kg".
 # Observed range: ~3–50 000 ppmv; anything outside is treated as invalid.
@@ -263,6 +266,7 @@ def test_write_diagnostics():
             "short_path_ppmv": {"n_valid": 0},
         }
 
+    DIAG_DIR.mkdir(parents=True, exist_ok=True)
     out_json = DIAG_DIR / "ice_l_maycom_tdl_diagnostics.json"
     out_json.write_text(json.dumps(diag, indent=2, default=str))
     print(f"\n  Diagnostics → {out_json}")
@@ -272,6 +276,7 @@ def test_write_diagnostics():
         out_csv, index=False
     )
     print(f"  Diagnostics CSV → {out_csv}")
+    update_latest(DIAG_DIR.parent, DIAG_DIR)
 
     assert out_json.exists()
     assert out_csv.exists()
@@ -299,6 +304,7 @@ def test_generate_figures():
     from matplotlib.colors import Normalize, LogNorm
     from matplotlib.cm import ScalarMappable
 
+    FIGS_DIR.mkdir(parents=True, exist_ok=True)
     df = _load_all_flights()
     flights = sorted(df["flight"].unique())
 
@@ -448,6 +454,7 @@ def test_generate_figures():
     print(f"\n  {len(png_files)} figure(s) written to {FIGS_DIR}/")
     for f in png_files:
         print(f"    {f.name}")
+    update_latest(FIGS_DIR.parent, FIGS_DIR)
     assert len(png_files) >= 5, f"Expected ≥5 figures, got {len(png_files)}"
 
 

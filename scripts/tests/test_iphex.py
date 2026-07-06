@@ -43,13 +43,16 @@ import pytest
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 DATA_DIR  = REPO_ROOT / "data/raw/IPHEX"
-DIAG_DIR  = REPO_ROOT / "logs/campaign_tests/iphex"
-FIGS_DIR  = REPO_ROOT / "figs/campaign_tests/iphex"
-
-DIAG_DIR.mkdir(parents=True, exist_ok=True)
-FIGS_DIR.mkdir(parents=True, exist_ok=True)
+# Timestamped so re-running this test doesn't overwrite a previous run's
+# diagnostics/figures; latest symlink kept pointing at the newest one.
+# Directories are created lazily inside the writing tests (not here at
+# module level) so importing/collecting this file has no filesystem effects.
+_RUN_TS   = _run_timestamp()
+DIAG_DIR  = REPO_ROOT / "logs/campaign_tests/iphex" / _RUN_TS
+FIGS_DIR  = REPO_ROOT / "figs/campaign_tests/iphex" / _RUN_TS
 
 # Ophir TDL physical range (ppmv)
 _TDL_PPMV_MIN = 1.0
@@ -330,6 +333,7 @@ def test_write_diagnostics():
             }
         diag["per_flight"][str(flight)] = entry
 
+    DIAG_DIR.mkdir(parents=True, exist_ok=True)
     out_json = DIAG_DIR / "iphex_diagnostics.json"
     out_json.write_text(json.dumps(diag, indent=2, default=str))
     print(f"\n  Diagnostics → {out_json}")
@@ -342,6 +346,7 @@ def test_write_diagnostics():
         "Si_chilled_mirror", "Si_TDL", "Si_DEWPT", "Si",
     ]].to_csv(out_csv, index=False)
     print(f"  Diagnostics CSV → {out_csv}")
+    update_latest(DIAG_DIR.parent, DIAG_DIR)
 
     assert out_json.exists()
     assert out_csv.exists()
@@ -369,6 +374,7 @@ def test_generate_figures():
     from matplotlib.colors import Normalize
     from matplotlib.cm import ScalarMappable
 
+    FIGS_DIR.mkdir(parents=True, exist_ok=True)
     df   = _load_all()
     flt  = sorted(df["flight"].unique())
 
@@ -537,6 +543,7 @@ def test_generate_figures():
     print(f"\n  {len(png_files)} figure(s) written to {FIGS_DIR}/")
     for f in png_files:
         print(f"    {f.name}")
+    update_latest(FIGS_DIR.parent, FIGS_DIR)
     assert len(png_files) >= 7, f"Expected ≥7 figures, got {len(png_files)}"
 
 

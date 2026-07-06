@@ -20,14 +20,17 @@ import pytest
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 DATA_DIR = REPO_ROOT / "data/raw/ATTREX"
 CPI_CSV = REPO_ROOT / "data/raw/cpi_embeddings_timestamps.csv"
-DIAG_DIR = REPO_ROOT / "logs/campaign_tests/attrex"
-FIGS_DIR = REPO_ROOT / "figs/campaign_tests/attrex"
-
-DIAG_DIR.mkdir(parents=True, exist_ok=True)
-FIGS_DIR.mkdir(parents=True, exist_ok=True)
+# Timestamped so re-running this test doesn't overwrite a previous run's
+# diagnostics/figures; latest symlink kept pointing at the newest one.
+# Directories are created lazily inside the writing tests (not here at
+# module level) so importing/collecting this file has no filesystem effects.
+_RUN_TS = _run_timestamp()
+DIAG_DIR = REPO_ROOT / "logs/campaign_tests/attrex" / _RUN_TS
+FIGS_DIR = REPO_ROOT / "figs/campaign_tests/attrex" / _RUN_TS
 
 from parsers.attrex import load_attrex, extract_attrex_standard
 
@@ -290,8 +293,10 @@ def test_write_diagnostics():
     else:
         diag["cpi_overlap"] = None
 
+    DIAG_DIR.mkdir(parents=True, exist_ok=True)
     out = DIAG_DIR / "attrex_diagnostics.json"
     out.write_text(json.dumps(diag, indent=2, default=str))
+    update_latest(DIAG_DIR.parent, DIAG_DIR)
     print(f"\n  Diagnostics → {out}")
 
     assert diag["n_total_rows"] > 0
@@ -310,6 +315,7 @@ def test_generate_figures():
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
 
+    FIGS_DIR.mkdir(parents=True, exist_ok=True)
     df = _load_attrex_cached()
     ts = pd.to_datetime(df["Timestamp"], utc=True)
 
@@ -484,6 +490,7 @@ def test_generate_figures():
     print(f"\n  {len(png_files)} figure(s) written to {FIGS_DIR}/")
     for f in png_files:
         print(f"    {f.name}")
+    update_latest(FIGS_DIR.parent, FIGS_DIR)
     assert len(png_files) > 0, "No figures were generated"
 
 

@@ -14,7 +14,11 @@ none of it is version-controlled.
 - **`all-campaigns/<YYYYMMDD_HHMMSS>/`** — output of
   `scripts/plot_all_campaigns.py`, called automatically by `main.py` after each
   full pipeline run. Cross-campaign comparison plots: `01_si_distributions.png`
-  through `09_qv_instrument_coverage.png`.
+  through `12_alt_vs_tair_scatter.png` (Si/Tair_C/P_hPa/qv/Alt_m/Sw
+  distributions, Si-vs-Tair hexbin, flight-day availability matrix, summary
+  boxplots, Si/qv instrument-coverage heatmaps, Alt_m-vs-Tair scatter). This is
+  the single home for all-campaigns figures — `full_diagnostic.py` used to
+  duplicate several of these (see below) before being folded in here.
 
 - **`qaqc/<YYYYMMDD_HHMMSS>/`** — output of `python scripts/qa_checks.py`, one
   or two figures per QC check (e.g. `05a_instrument_scatter.png`,
@@ -26,21 +30,22 @@ none of it is version-controlled.
   coverage heatmap across all 7 standard variables), and
   `cpi_fusion_si_tair_scatter.png`.
 
-- **`full_diagnostic/<YYYYMMDD_HHMMSS>/`** — output of
-  `python scripts/full_diagnostic.py`, a different one-off summary script (per-
-  variable distributions, availability heatmap, temporal coverage, altitude vs.
-  Tair, Si vs. Tair) — kept in its own namespace so it never collides with
-  `all-campaigns/`, which two different scripts used to share before the
-  2026-07-06 reorg.
-
-- **`campaign_tests/<campaign>/`** — output of the one-off per-campaign deep-dive
-  scripts in `scripts/tests/` (currently `attrex/`, `ice_l/`, `iphex/`). *Not*
-  timestamped — debug artifacts for a single campaign's parser, overwritten each
-  re-run rather than tracked as pipeline history.
+- **`campaign_tests/<campaign>/<YYYYMMDD_HHMMSS>/`** — output of the one-off
+  per-campaign deep-dive scripts in `scripts/tests/` (currently `attrex/`,
+  `ice_l/`, `iphex/`). Timestamped like everything else since 2026-07-06 (with
+  a `latest` symlink), but the directory is created lazily inside the test
+  function that writes to it rather than at module import — so just collecting
+  the test file (e.g. `pytest --collect-only`) doesn't create empty run folders.
 
 - **`archive/`** — everything that existed before the 2026-07-06 reorg (the
   undated `all-campaigns/` snapshot, loose `cpi_fusion_*.png` files that used to
-  sit at the `figs/` root, etc.), moved here as-is so nothing was lost.
+  sit at the `figs/` root, the old un-timestamped `campaign_tests/*` figures,
+  and `full_diagnostic.py`'s output from when it still generated figures),
+  moved here as-is so nothing was lost. `scripts/full_diagnostic.py` is now
+  console-output only (see `logs/README.md`) — its 3 genuinely unique plots
+  (Alt_m distribution, Sw distribution, Alt_m-vs-Tair scatter) were folded into
+  `all-campaigns/` as plots 10–12; the other 4 duplicated plots already in
+  `all-campaigns/` (01/02/03/07/08) were dropped rather than ported.
 
 ## The `latest` symlink
 
