@@ -2,8 +2,13 @@
 ARM (Atmospheric Radiation Measurement) campaign data parser.
 
 Campaign: SGP 2000 Spring Cloud Campaign
-Data Source: https://www.arm.gov/research/campaigns/sgp2000sprcloud
-Data Format: Binary .t4archive.gz files (big-endian int32)
+- Data Source: https://iop.arm.gov/2000/sgp/cloud
+- Campaign website: https://www.arm.gov/research/campaigns/sgp2000sprcloud
+    - in "poellot-citation/t4" subdirectory
+- Data Format: Binary .t4archive.gz files (big-endian int32)
+- Variables: Date, Time_sec, Air_Temp_Rosemount_C, Frost_Point_Cryo_C, GPS_Lat_deg, GPS_Lon_deg, GPS_Alt_m
+- Derived: Si (ice supersaturation)
+- Notes: 
 """
 
 import gzip
@@ -12,7 +17,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Union, List, Optional
 
-from .utils import si_from_frost_point
+from .utils import si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si
 
 
 # Column definitions for ARM binary files
@@ -116,21 +121,98 @@ def load_arm_file(filepath: Union[str, Path]) -> pd.DataFrame:
     data_float[:, 1:] = data_float[:, 1:] / 1000.0 - 100.0
     
     df = pd.DataFrame(data_float, columns=ARM_COLUMNS)
-    
-    # Decode date and create timestamp
+
+    # ------------------------------------------------------------------ #
+    # Instrument validity masking                                          #
+    # ------------------------------------------------------------------ #
+    # Background: the T4 binary format encodes all values as               #
+    #   physical_value = raw_int32 / 1000.0 - 100.0                       #
+    # so raw = 100000 decodes to 0.0 (fill/GPS-not-locked),               #
+    # and raw < 0 decodes to < -100 (cryo instrument below range).        #
+    #
+    # Issue A — GPS fill values                                            #
+    # When the GPS receiver has not yet acquired a fix, the hardware        #
+    # outputs raw = 100000 for all three GPS channels, which decodes to    #
+    # Lat = Lon = Alt = 0.0.  These are not valid coordinates and must be  #
+    # treated as NaN to avoid the aircraft appearing to be at 0°N 0°E.    #
+    # Detection: Lat ≈ 0 AND Lon ≈ 0 simultaneously.                       #
+    gps_fill = (df["GPS_Lat_deg"].abs() < 0.01) & (df["GPS_Lon_deg"].abs() < 0.01)
+    n_gps_fill = int(gps_fill.sum())
+    if n_gps_fill:
+        df.loc[gps_fill, ["GPS_Lat_deg", "GPS_Lon_deg", "GPS_Alt_m"]] = np.nan
+
+    # Issue B — cryo hygrometer below detection limit                      #
+    # The Cryo-Electric Mirror (CEM) outputs raw < 0 when the mirror is    #
+    # cooled below its lower measurement limit (~-80°C frost point for     #
+    # typical aircraft CEM instruments).  This decodes to physically       #
+    # impossible temperatures (-100 to -150°C) which would drive           #
+    # qv_from_e_P to essentially zero, creating a false "bone-dry" signal. #
+    # Mask both the cryo dew-point and cryo frost-point channels.          #
+    CRYO_FLOOR = -80.0  # °C; below this the CEM is out of range
+    for col in ("Dew_Point_Cryo_C", "Frost_Point_Cryo_C"):
+        below_range = df[col] < CRYO_FLOOR
+        df.loc[below_range, col] = np.nan
+
+    # Issue C — cryo hygrometer reads above air temperature (cloud flood)  #
+    # When the aircraft flies through cloud or precipitation, liquid water  #
+    # droplets coat the cryo mirror and it equilibrates to the liquid dew   #
+    # point of the ambient air — which in saturated conditions can be very  #
+    # close to (but not above) Tair.  However, instrument thermal lag and   #
+    # droplet flooding sometimes causes the Cryo to report Td > Tair for   #
+    # tens of seconds, which is thermodynamically impossible.               #
+    # Empirically confirmed in citation.0317001715: Frost_Point_Cryo reads  #
+    # 20–25°C while Tair = 5°C and Dew_Point_EGG reads 3.9°C (correct).   #
+    #                                                                        #
+    # Tolerance: use Tair + 1°C as the threshold rather than strict Tair.   #
+    # In-cloud conditions near 100% RH produce Frost_Point ≈ Tair; CEM and  #
+    # Rosemount temperature sensors each carry ±0.3–0.5°C precision, so a   #
+    # 1°C buffer distinguishes legitimate saturated readings (which remain   #
+    # within ~0.5°C of Tair) from genuine malfunctions (which exceed Tair   #
+    # by 10–20°C as in the 0317001715 file).                                #
+    CRYO_TAIR_MARGIN = 1.0  # °C buffer above Tair before flagging as invalid
+    tair = df["Air_Temp_Rosemount_C"].values
+    for col in ("Dew_Point_EGG_C", "Dew_Point_Cryo_C", "Frost_Point_Cryo_C"):
+        above_tair = pd.to_numeric(df[col], errors="coerce") > tair + CRYO_TAIR_MARGIN
+        df.loc[above_tair, col] = np.nan
+
+    # ------------------------------------------------------------------ #
+    # Decode date and create timestamp                                     #
+    # ------------------------------------------------------------------ #
     df["Date"] = df["Date"].apply(_decode_arm_date)
     df["Timestamp"] = df["Date"] + pd.to_timedelta(df["Time_sec"], unit="s")
     df["Timestamp"] = df["Timestamp"].dt.tz_localize("UTC")
-    
-    # Calculate ice supersaturation
-    df["Si"] = si_from_frost_point(
-        df["Frost_Point_Cryo_C"], 
-        df["Air_Temp_Rosemount_C"]
+
+    # ------------------------------------------------------------------ #
+    # Derived thermodynamic quantities                                     #
+    # ------------------------------------------------------------------ #
+    # Calculate ice supersaturation from cryo frost point
+    df["Si_chilled_mirror"] = si_from_frost_point(
+        df["Frost_Point_Cryo_C"],
+        df["Air_Temp_Rosemount_C"],
     )
-    
+    df["Si"] = df["Si_chilled_mirror"]
+
+    # Water vapor mixing ratio (g/kg) from frost point + static pressure
+    df["P_hPa"] = df["Static_Pressure_mb"]  # mb == hPa
+    e_cm = es_ice_hPa(df["Frost_Point_Cryo_C"])
+    df["qv_chilled_mirror"] = qv_from_e_P(e_cm, df["P_hPa"])
+    df["qv"] = df["qv_chilled_mirror"]
+
+    # Supersaturation w.r.t. liquid water
+    df["Sw"] = sw_from_si(df["Si"], df["Air_Temp_Rosemount_C"])
+
+    # Prefer Pressure_Altitude_m over GPS_Alt_m: GPS fix can be unavailable
+    # or unreliable early in the flight; the ISA-derived pressure altitude
+    # is available throughout from the static pressure sensor.
+    df["Alt_m"] = np.where(
+        df["GPS_Alt_m"].notna() & (df["GPS_Alt_m"] > 0),
+        df["GPS_Alt_m"],
+        df["Pressure_Altitude_m"],
+    )
+
     # Add source file tracking
     df["source_file"] = filepath.name
-    
+
     return df
 
 
@@ -187,10 +269,15 @@ def extract_arm_standard(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df["Air_Temp_Rosemount_C"],
+        "P_hPa": df.get("P_hPa", np.nan),
         "Si": df["Si"],
+        "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
+        "qv": df.get("qv", np.nan),
+        "qv_chilled_mirror": df.get("qv_chilled_mirror", np.nan),
+        "Sw": df.get("Sw", np.nan),
         "Lat": df["GPS_Lat_deg"],
         "Lon": df["GPS_Lon_deg"],
-        "Alt_m": df["GPS_Alt_m"],
+        "Alt_m": df.get("Alt_m", df["GPS_Alt_m"]),
         "Campaign": df.get("Campaign", "ARM"),
         "source_file": df["source_file"],
     })

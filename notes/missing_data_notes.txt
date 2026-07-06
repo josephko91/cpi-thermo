@@ -1,11 +1,11 @@
 Notes on missing data 
 5/6/26
 
-ATTREX 
+ATTREX (done)
 - Lat (incorrect)
 - Lon (N/A)
 
-CRYSTAL-FACE-NASA
+CRYSTAL-FACE-NASA 
 - Lat, Lon, Alt (N/A)
 
 CRYSTAL-FACE-UND

@@ -3,9 +3,12 @@ CRYSTAL-FACE NASA (WB-57) campaign data parser.
 
 Campaign: CRYSTAL-FACE NASA WB-57 aircraft
 Data Source: https://espoarchive.nasa.gov/archive/browse/crystalf/WB57
-Data Formats:
-  - JPL Laser Hygrometer (JLH) data
-  - Meteorological Measurement System (MMS) data with geolocation (LAT, LONG, ALT)
+Data:
+    - Water Vapor
+        - JPL Laser Hygrometer (JLH) data (only ~16% coverage for water vapor)
+        - ALIAS (Airborne Laser Absorption Spectrometer) data 
+        - HW (Harvard Water Vapor) data (5 second intervals)
+    - Meteorological Measurement System (MMS) data with geolocation (LAT, LONG, ALT)
 """
 
 import pandas as pd
@@ -18,7 +21,16 @@ from .utils import (
     parse_columns_with_units,
     extract_takeoff_date,
     si_from_rh,
+    si_from_ppmv,
+    es_ice_hPa,
+    qv_from_ppmv,
+    qv_from_e_P,
+    sw_from_si,
 )
+
+
+def _round_timestamp_to_second(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series, utc=True, errors="coerce").dt.round("s")
 
 
 def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -45,21 +57,33 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     with open(filepath) as f:
         lines = f.readlines()
     
-    # Parse header
-    n_header = int(lines[0].split()[0])
-    
     # Extract takeoff date from header
-    takeoff_date = extract_takeoff_date(lines[:n_header])
-    
-    # Parse scale factors (typically line 4)
-    # Remove comments and parse only numeric values
-    scale_line = lines[4].split(";")[0].split()
-    scales = [float(s) for s in scale_line if s.strip()]
-    
-    # Parse missing value indicators (typically line 5)
-    # Remove comments and parse only numeric values
-    missing_line = lines[5].split(";")[0].split()
-    missing_vals = [float(m) for m in missing_line if m.strip()]
+    takeoff_date = extract_takeoff_date(lines)
+
+    # Parse scale factors and missing values from the labeled header lines.
+    scale_line = next((line for line in lines if "scale factors" in line.lower()), None)
+    missing_line = next((line for line in lines if "missing values" in line.lower()), None)
+    if scale_line is None or missing_line is None:
+        raise ValueError(f"Could not locate scale/missing value lines in {filepath.name}")
+
+    scales = [float(s) for s in scale_line.split(";")[0].split()]
+    missing_vals = [float(m) for m in missing_line.split(";")[0].split()]
+
+    # Find the line that declares the actual data columns.
+    data_header_idx = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.strip().startswith("UT")
+            and "P_ALT" in line
+            and "LAT" in line
+            and "LONG" in line
+            and "TAS" in line
+        ),
+        None,
+    )
+    if data_header_idx is None:
+        raise ValueError(f"Could not locate MMS data header in {filepath.name}")
     
     # Column names for MMS data
     columns = ["UT", "P_ALT", "LAT", "LONG", "TAS"]
@@ -68,21 +92,29 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df = pd.read_csv(
         filepath,
         sep=r"\s+",
-        skiprows=n_header,
+        skiprows=data_header_idx + 1,
         names=columns,
     )
     
     if df.empty:
         return df
     
+    # scales/missing_vals cover only the dependent variables (P_ALT, LAT,
+    # LONG, TAS) per the ICARTT header — columns[0] ("UT") is the
+    # independent variable and has no entry in either list. Index against
+    # columns[1:], not columns, or every dependent variable gets scaled by
+    # the value meant for its predecessor (confirmed bug: previously this
+    # silently scaled P_ALT by LAT's factor and LAT by LONG's factor).
+    dep_columns = columns[1:]
+
     # Replace missing values with NaN BEFORE applying scale factors
     # (missing values are in raw data units before scaling)
-    for i, col in enumerate(columns):
+    for i, col in enumerate(dep_columns):
         if i < len(missing_vals):
             df.loc[df[col] == missing_vals[i], col] = np.nan
-    
+
     # Apply scale factors AFTER removing missing values
-    for i, col in enumerate(columns):
+    for i, col in enumerate(dep_columns):
         if i < len(scales):
             df[col] = df[col] * scales[i]
     
@@ -90,7 +122,9 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["Timestamp"] = df["UT"].apply(
         lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
     )
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    # record source filename for MMS rows
+    df["source_file"] = filepath.name
     
     # Rename columns to standard names
     df.rename(columns={
@@ -100,6 +134,245 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     }, inplace=True)
     
     return df[["Timestamp", "Lat", "Lon", "Alt_m"]]
+
+
+def load_np_file(filepath: Union[str, Path]) -> pd.DataFrame:
+    """
+    Load a single CRYSTAL-FACE NASA NP (WB-57F navigational data) file.
+
+    NP files are standard ICARTT-1001 records (barometric + GPS altitude,
+    INU + GPS lat/lon — 12 dependent variables) but, unlike the MMS-style
+    files handled by load_mms_file, their header never labels the
+    scale-factor/missing-value lines with "scale factors"/"missing values"
+    text. Parsed positionally per the ICARTT 1001 spec instead: after the
+    independent-variable description comes PNUM, then scale factors, then
+    missing values, then PNUM variable-description lines, then a special-
+    comment count/block, then a normal-comment count/block whose last line
+    is the column header row.
+    """
+    filepath = Path(filepath)
+
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    takeoff_date = extract_takeoff_date(lines)
+
+    n_header_lines = int(lines[0].split()[0])
+    pnum = int(lines[9].strip())
+    scales = [float(s) for s in lines[10].split()]
+    missing_vals = [float(m) for m in lines[11].split()]
+    n_scoml = int(lines[12 + pnum].strip())
+    n_ncoml_line_idx = 12 + pnum + 1 + n_scoml
+    n_ncoml = int(lines[n_ncoml_line_idx].strip())
+    header_row_idx = n_ncoml_line_idx + n_ncoml  # last normal comment = column header
+
+    columns = lines[header_row_idx].split()
+    if columns[1:] != ["baroalt", "iLat", "iLon", "gAlt", "gLat", "gLon",
+                       "TAS", "gSpd", "trkA", "T_Head", "Pitch", "Roll"]:
+        raise ValueError(f"Unexpected NP column layout in {filepath.name}: {columns}")
+
+    df = pd.read_csv(
+        filepath,
+        sep=r"\s+",
+        skiprows=n_header_lines,
+        names=columns,
+    )
+
+    if df.empty:
+        return df
+
+    dep_cols = columns[1:]
+    for i, col in enumerate(dep_cols):
+        if i < len(missing_vals):
+            df.loc[df[col] == missing_vals[i], col] = np.nan
+    for i, col in enumerate(dep_cols):
+        if i < len(scales) and scales[i] != 1.0:
+            df[col] = df[col] * scales[i]
+
+    df["Timestamp"] = df[columns[0]].apply(
+        lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
+    )
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    df["source_file"] = filepath.name
+
+    # Prefer barometric altitude/INU lat-lon: available from ground/taxi
+    # onward, whereas GPS lat/lon/alt can carry fill values before GPS lock.
+    df.rename(columns={"baroalt": "Alt_m", "iLat": "Lat", "iLon": "Lon"}, inplace=True)
+
+    return df[["Timestamp", "Lat", "Lon", "Alt_m"]]
+
+
+def load_hw_file(filepath: Union[str, Path]) -> pd.DataFrame:
+    """
+    Load a CRYSTAL-FACE Harvard Water Vapor (HW) file.
+
+    Format: ICARTT 1001, two columns — Time (UT seconds from midnight) and
+    WV (water vapor volume mixing ratio, raw units; multiply by scale to get ppmv).
+    Missing value: 999999 (raw).
+    """
+    filepath = Path(filepath)
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    n_header = int(lines[0].split()[0])
+    takeoff_date = extract_takeoff_date(lines[:n_header])
+
+    # Scale factors and missing values are on fixed header lines (ICARTT 1001).
+    # Scale line is line index 10 (0-based), missing line is index 11.
+    try:
+        scale = float(lines[10].strip())
+        missing_raw = float(lines[11].strip())
+    except (IndexError, ValueError):
+        scale, missing_raw = 0.01, 999999.0
+
+    df = pd.read_csv(
+        filepath,
+        sep=r"\s+",
+        skiprows=n_header,
+        names=["Time", "WV"],
+    )
+    df["Time"] = pd.to_numeric(df["Time"], errors="coerce")
+    df["WV"] = pd.to_numeric(df["WV"], errors="coerce")
+    df.loc[df["WV"] == missing_raw, "WV"] = np.nan
+    df["H2O_ppmv"] = df["WV"] * scale
+    df.loc[df["H2O_ppmv"] <= 0, "H2O_ppmv"] = np.nan
+
+    df["Timestamp"] = df["Time"].apply(
+        lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
+    )
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    df["source_file"] = filepath.name
+    return df[["Timestamp", "H2O_ppmv", "source_file"]]
+
+
+def load_alias_file(filepath: Union[str, Path]) -> pd.DataFrame:
+    """
+    Load a single CRYSTAL-FACE NASA ALIAS (Airborne Laser In-situ Spectrometer)
+    file.
+
+    Standard ICARTT-1001 record with 7 dependent variables (H2O, H218O, HDO,
+    H217O, Delta-18O, Delta-D, Delta-17O) at ~2 s spectral-average resolution.
+    H2O (ppmv) is the primary water-vapor measurement, used here as a third Si
+    fallback source (behind JLH and HW) -- config.yaml's h2o_ranking for this
+    campaign already lists ALIAS third, but it was never wired up (previously
+    hardcoded to NaN). ALIAS data exists for several JLH-gap-heavy flight days
+    (2002-07-11, 07-16, 07-28, 07-29) that HW's 10 s cadence doesn't fully
+    cover. Parsed positionally per the ICARTT 1001 spec, same layout as
+    load_np_file (header lacks labelled "scale factors"/"missing values" text).
+    """
+    filepath = Path(filepath)
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    takeoff_date = extract_takeoff_date(lines)
+
+    n_header_lines = int(lines[0].split()[0])
+    pnum = int(lines[9].strip())
+    scales = [float(s) for s in lines[10].split()]
+    missing_vals = [float(m) for m in lines[11].split()]
+    n_scoml = int(lines[12 + pnum].strip())
+    n_ncoml_line_idx = 12 + pnum + 1 + n_scoml
+    n_ncoml = int(lines[n_ncoml_line_idx].strip())
+    header_row_idx = n_ncoml_line_idx + n_ncoml  # last normal comment = column header
+
+    columns = lines[header_row_idx].split()
+    if "ALIAS_H2O" not in columns:
+        raise ValueError(f"Unexpected ALIAS column layout in {filepath.name}: {columns}")
+
+    df = pd.read_csv(
+        filepath,
+        sep=r"\s+",
+        skiprows=n_header_lines,
+        names=columns,
+    )
+
+    if df.empty:
+        return df
+
+    dep_cols = columns[1:]
+    for i, col in enumerate(dep_cols):
+        if i < len(missing_vals):
+            df.loc[df[col] == missing_vals[i], col] = np.nan
+    for i, col in enumerate(dep_cols):
+        if i < len(scales) and scales[i] != 1.0:
+            df[col] = df[col] * scales[i]
+
+    df["H2O_ppmv"] = pd.to_numeric(df["ALIAS_H2O"], errors="coerce")
+    df.loc[df["H2O_ppmv"] <= 0, "H2O_ppmv"] = np.nan
+
+    df["Timestamp"] = df[columns[0]].apply(
+        lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
+    )
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    df["source_file"] = filepath.name
+
+    return df[["Timestamp", "H2O_ppmv", "source_file"]]
+
+
+def load_mm_met_file(filepath: Union[str, Path]) -> pd.DataFrame:
+    """
+    Load a CRYSTAL-FACE MMS meteorology (MM) file.
+
+    Format: ICARTT 1001, 7 columns — GMT, Psta, Tsta, Thta, U, V, W.
+    Scale factors from header: Psta×0.1→hPa, Tsta×0.01→K.
+    Missing value: 99999 for Psta/Tsta (raw).
+    """
+    filepath = Path(filepath)
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    n_header = int(lines[0].split()[0])
+    takeoff_date = extract_takeoff_date(lines[:n_header])
+
+    # Locate scale factor and missing value lines in the header.
+    # In MM files, scale factors come first, then missing values.
+    def _parse_numbers(line: str) -> list:
+        # Strip inline comments (;...) before splitting
+        return [float(s) for s in line.split(";")[0].split() if s]
+
+    scales_line = next(
+        (l for l in lines[:n_header] if l.strip().startswith("0.1")), None
+    )
+    missing_line = next(
+        (l for l in lines[:n_header] if l.strip().startswith("99999")), None
+    )
+    scales = _parse_numbers(scales_line) if scales_line else [1.0] * 6
+    missing_vals = _parse_numbers(missing_line) if missing_line else [99999.0] * 6
+
+    data_header_idx = next(
+        (i for i, l in enumerate(lines) if "GMT" in l and "Psta" in l and "Tsta" in l),
+        None,
+    )
+    if data_header_idx is None:
+        raise ValueError(f"Could not locate MM data header in {filepath.name}")
+
+    df = pd.read_csv(
+        filepath,
+        sep=r"\s+",
+        skiprows=data_header_idx + 1,
+        names=["GMT", "Psta", "Tsta", "Thta", "U", "V", "W"],
+    )
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Replace missing values and apply scale factors for P and T
+    for i, col in enumerate(["Psta", "Tsta"]):
+        if i < len(missing_vals):
+            df.loc[df[col] == missing_vals[i], col] = np.nan
+        if i < len(scales):
+            df[col] = df[col] * scales[i]
+
+    df["P_hPa"] = df["Psta"]      # already in hPa after scaling
+    df["T_K"] = df["Tsta"]        # already in K after scaling
+    df.loc[(df["T_K"] < 150) | (df["T_K"] > 350), "T_K"] = np.nan
+    df.loc[(df["P_hPa"] < 1) | (df["P_hPa"] > 1100), "P_hPa"] = np.nan
+
+    df["Timestamp"] = df["GMT"].apply(
+        lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
+    )
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    df["source_file"] = filepath.name
+    return df[["Timestamp", "P_hPa", "T_K", "source_file"]]
 
 
 def load_crystal_face_nasa_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -147,13 +420,13 @@ def load_crystal_face_nasa_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["Timestamp"] = df[ut_col].apply(
         lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
     )
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
     
-    # Calculate Si from RH (relative humidity w.r.t. ice)
-    # JLH files typically have RH or %RH column
+    # Calculate Si from RH (relative humidity w.r.t. ice) — JLH instrument
     rh_col = next((c for c in df.columns if "rh" in c.lower()), None)
     if rh_col:
-        df["Si"] = si_from_rh(df[rh_col])
+        df["Si_JLH"] = si_from_rh(df[rh_col])
+        df["RH_JLH"] = df[rh_col]  # store for qv_jlh computation later
     
     # Convert temperature from Kelvin to Celsius if present
     temp_col = next((c for c in df.columns if c.lower() in ["t_k", "t"]), None)
@@ -165,9 +438,61 @@ def load_crystal_face_nasa_file(filepath: Union[str, Path]) -> pd.DataFrame:
     return df
 
 
+def load_nm_met_file(filepath: Union[str, Path]) -> pd.DataFrame:
+    """
+    Load a CRYSTAL-FACE NOAA Navigational Met (NM) file.
+
+    Format: ICARTT 1001, columns — UT, Press(mb), Temp(degC), PotTemp, WindSpd, WindDir, Mach.
+    Scale factors: all 1.0. Missing: 9999.999.
+    Coverage: full flight at 1 Hz (vs MM which may be truncated).
+    Note: labelled "unknown accuracy" — use as fallback after MM.
+    """
+    filepath = Path(filepath)
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    n_header = int(lines[0].split()[0])
+    takeoff_date = extract_takeoff_date(lines[:n_header])
+
+    data_header_idx = next(
+        (i for i, l in enumerate(lines) if "UT" in l and "Press" in l and "Temp" in l),
+        None,
+    )
+    if data_header_idx is None:
+        raise ValueError(f"Could not locate NM data header in {filepath.name}")
+
+    df = pd.read_csv(
+        filepath,
+        sep=r"\s+",
+        skiprows=data_header_idx + 1,
+        names=["UT", "Press", "Temp", "PotTemp", "WindSpd", "WindDir", "Mach"],
+    )
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df.loc[df["Temp"] == 9999.999, "Temp"] = np.nan
+    df.loc[df["Press"] == 9999.999, "Press"] = np.nan
+    df.loc[(df["Temp"] < -100) | (df["Temp"] > 50), "Temp"] = np.nan
+    df.loc[(df["Press"] < 1) | (df["Press"] > 1100), "Press"] = np.nan
+
+    df["T_K"] = df["Temp"] + 273.15
+    df["P_hPa"] = df["Press"]
+
+    df["Timestamp"] = df["UT"].apply(
+        lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
+    )
+    df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
+    df["source_file"] = filepath.name
+    return df[["Timestamp", "P_hPa", "T_K", "source_file"]]
+
+
 def load_crystal_face_nasa(
-    data_dir: Union[str, Path], 
+    data_dir: Union[str, Path],
     mms_dir: Optional[Union[str, Path]] = None,
+    hw_dir: Optional[Union[str, Path]] = None,
+    mm_dir: Optional[Union[str, Path]] = None,
+    nm_dir: Optional[Union[str, Path]] = None,
+    alias_dir: Optional[Union[str, Path]] = None,
     pattern: str = "*"
 ) -> pd.DataFrame:
     """
@@ -188,40 +513,251 @@ def load_crystal_face_nasa(
         Combined data from all files with optional geolocation from MMS.
     """
     data_dir = Path(data_dir)
-    files = [f for f in data_dir.glob(pattern) if f.is_file()]
-    
+    # Use rglob so files inside subdirectories (e.g. JW/) are found.
+    files = [f for f in data_dir.rglob(pattern) if f.is_file()]
+
     if not files:
         raise FileNotFoundError(f"No files matching '{pattern}' found in {data_dir}")
-    
-    # Load MMS geolocation data if available
-    mms_geo = None
+
+    # -----------------------------------------------------------------------
+    # Resolve sibling instrument directories relative to data_dir (JW/).
+    # data_dir.parent = CRYSTAL-FACE-NASA/
+    # -----------------------------------------------------------------------
+    campaign_root = data_dir.parent
+
+    # NP/ → WB-57F navigational data (barometric + GPS altitude, INU + GPS
+    # lat/lon) for MMS geolocation.
+    # NOTE: SP/ was previously (mis)used here, but SP*.WB57 files are
+    # SPP-100 cloud-particle-probe data, not navigation — load_mms_file's
+    # header search never matches them, so every SP file failed silently
+    # and Alt_m/Lat/Lon stayed NaN for the whole campaign. NP/ has real
+    # position data on all 19 flights and uses a different ICARTT header
+    # layout, hence the separate load_np_file loader.
+    geo_loader = load_mms_file
     if mms_dir is None:
-        mms_dir = data_dir / "MMS"
-    mms_dir = Path(mms_dir)
-    
-    if mms_dir.exists():
-        mms_files = [f for f in mms_dir.glob("*") if f.is_file()]
+        for candidate, loader in (
+            (data_dir / "MMS", load_mms_file),
+            (campaign_root / "NP", load_np_file),
+        ):
+            if candidate.exists():
+                mms_dir = candidate
+                geo_loader = loader
+                break
+    if mms_dir is not None:
+        mms_dir = Path(mms_dir)
+
+    # HW/ → Harvard Water Vapor (H2O ppmv, 10 s resolution)
+    if hw_dir is None:
+        hw_candidate = campaign_root / "HW"
+        if hw_candidate.exists():
+            hw_dir = hw_candidate
+    if hw_dir is not None:
+        hw_dir = Path(hw_dir)
+
+    # MM/ → MMS meteorology (P hPa, T K, 1 Hz)
+    if mm_dir is None:
+        mm_candidate = campaign_root / "MM"
+        if mm_candidate.exists():
+            mm_dir = mm_candidate
+    if mm_dir is not None:
+        mm_dir = Path(mm_dir)
+
+    # NM/ → NOAA navigational met (P mb, T degC, 1 Hz, full-flight fallback)
+    if nm_dir is None:
+        nm_candidate = campaign_root / "NM"
+        if nm_candidate.exists():
+            nm_dir = nm_candidate
+    if nm_dir is not None:
+        nm_dir = Path(nm_dir)
+
+    # ALIAS/ → third Si fallback (H2O ppmv, ~2 s resolution), for JLH gaps
+    # that HW's 10 s cadence doesn't fill.
+    if alias_dir is None:
+        alias_candidate = campaign_root / "ALIAS"
+        if alias_candidate.exists():
+            alias_dir = alias_candidate
+    if alias_dir is not None:
+        alias_dir = Path(alias_dir)
+
+    # -----------------------------------------------------------------------
+    # Load geolocation (position only)
+    # -----------------------------------------------------------------------
+    mms_geo = None
+    if mms_dir is not None and mms_dir.exists():
+        mms_files = [f for f in mms_dir.glob("*.WB57") if f.is_file()]
         if mms_files:
             mms_dfs = []
             for f in sorted(mms_files):
                 try:
-                    mms_dfs.append(load_mms_file(f))
+                    mms_dfs.append(geo_loader(f))
                 except Exception as e:
-                    print(f"Warning: Could not load MMS file {f.name}: {e}")
+                    print(f"Warning: Could not load geolocation file {f.name}: {e}")
             if mms_dfs:
                 mms_geo = pd.concat(mms_dfs, ignore_index=True)
-    
-    # Load JLH data
+
+    # -----------------------------------------------------------------------
+    # Load MM meteorology (P and T for HW Si calculation)
+    # -----------------------------------------------------------------------
+    mm_met = None
+    if mm_dir is not None and mm_dir.exists():
+        mm_files = [f for f in mm_dir.glob("*.WB57") if f.is_file()]
+        if mm_files:
+            mm_dfs = []
+            for f in sorted(mm_files):
+                try:
+                    mm_dfs.append(load_mm_met_file(f))
+                except Exception as e:
+                    print(f"Warning: Could not load MM file {f.name}: {e}")
+            if mm_dfs:
+                mm_met = pd.concat(mm_dfs, ignore_index=True).dropna(subset=["Timestamp"]).sort_values("Timestamp")
+                print(f"  MM met: {len(mm_met):,} records across "
+                      f"{mm_met['Timestamp'].dt.date.nunique()} dates")
+
+    # -----------------------------------------------------------------------
+    # Load NM navigational met (NOAA, full-flight fallback for T and P)
+    # -----------------------------------------------------------------------
+    nm_met = None
+    if nm_dir is not None and nm_dir.exists():
+        nm_files = [f for f in nm_dir.glob("*.WB57") if f.is_file()]
+        if nm_files:
+            nm_dfs = []
+            for f in sorted(nm_files):
+                try:
+                    nm_dfs.append(load_nm_met_file(f))
+                except Exception as e:
+                    print(f"Warning: Could not load NM file {f.name}: {e}")
+            if nm_dfs:
+                nm_met = pd.concat(nm_dfs, ignore_index=True).dropna(subset=["Timestamp"]).sort_values("Timestamp")
+                print(f"  NM met: {len(nm_met):,} records across "
+                      f"{nm_met['Timestamp'].dt.date.nunique()} dates")
+
+    # Build combined T/P: MM primary, NM fills gaps
+    tp_met = mm_met
+    if nm_met is not None:
+        if tp_met is None:
+            tp_met = nm_met
+        else:
+            # Merge NM into MM: fill MM NaN T/P from NM, and append NM rows
+            # for timestamps absent from MM (e.g. Jul 29 first 3.5 h).
+            tp_combined = pd.merge_asof(
+                nm_met.sort_values("Timestamp"),
+                mm_met[["Timestamp", "P_hPa", "T_K"]].rename(
+                    columns={"P_hPa": "P_hPa_mm", "T_K": "T_K_mm"}
+                ).sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=5),
+            )
+            # Use MM where available, NM otherwise
+            tp_combined["P_hPa"] = tp_combined["P_hPa_mm"].where(
+                tp_combined["P_hPa_mm"].notna(), tp_combined["P_hPa"]
+            )
+            tp_combined["T_K"] = tp_combined["T_K_mm"].where(
+                tp_combined["T_K_mm"].notna(), tp_combined["T_K"]
+            )
+            tp_combined = tp_combined[["Timestamp", "P_hPa", "T_K"]].dropna(subset=["Timestamp"])
+            # Also keep original MM rows (higher-quality) for complete coverage
+            tp_met = pd.concat(
+                [mm_met[["Timestamp", "P_hPa", "T_K"]], tp_combined],
+                ignore_index=True,
+            ).sort_values("Timestamp").drop_duplicates(subset=["Timestamp"], keep="first")
+
+    # -----------------------------------------------------------------------
+    # Load HW water vapour and compute Si via HW + T/P met (MM primary, NM fallback)
+    # -----------------------------------------------------------------------
+    hw_si = None
+    if hw_dir is not None and hw_dir.exists() and tp_met is not None:
+        hw_files = [f for f in hw_dir.glob("*.WB57") if f.is_file()]
+        if hw_files:
+            hw_dfs = []
+            for f in sorted(hw_files):
+                try:
+                    hw_dfs.append(load_hw_file(f))
+                except Exception as e:
+                    print(f"Warning: Could not load HW file {f.name}: {e}")
+            if hw_dfs:
+                hw_all = pd.concat(hw_dfs, ignore_index=True).sort_values("Timestamp")
+                # Merge HW ppmv with T/P met (nearest within 30 s — HW is 10 s resolution)
+                hw_mm = pd.merge_asof(
+                    hw_all,
+                    tp_met[["Timestamp", "P_hPa", "T_K"]].sort_values("Timestamp"),
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=30),
+                )
+                valid = hw_mm["H2O_ppmv"].notna() & hw_mm["T_K"].notna() & hw_mm["P_hPa"].notna()
+                hw_mm["Si_HW"] = np.nan
+                if valid.sum() > 0:
+                    hw_mm.loc[valid, "Si_HW"] = si_from_ppmv(
+                        hw_mm.loc[valid, "H2O_ppmv"],
+                        hw_mm.loc[valid, "T_K"],
+                        hw_mm.loc[valid, "P_hPa"],
+                    )
+                    hw_mm.loc[
+                        (hw_mm["Si_HW"] < -1.0) | (hw_mm["Si_HW"] > 2.0), "Si_HW"
+                    ] = np.nan
+                # Also derive T_C from MM for HW rows
+                hw_mm["T_C_HW"] = hw_mm["T_K"] - 273.15
+                # qv_hw from ppmv (no pressure needed)
+                hw_mm["qv_hw"] = qv_from_ppmv(hw_mm["H2O_ppmv"])
+                hw_si = hw_mm[["Timestamp", "Si_HW", "T_C_HW", "qv_hw"]].dropna(subset=["Si_HW"])
+                print(f"  HW Si: {len(hw_si):,} valid records across "
+                      f"{hw_si['Timestamp'].dt.date.nunique()} dates")
+
+    # -----------------------------------------------------------------------
+    # Load ALIAS water vapour and compute Si via ALIAS + T/P met (third Si
+    # fallback, behind JLH and HW)
+    # -----------------------------------------------------------------------
+    alias_si = None
+    if alias_dir is not None and alias_dir.exists() and tp_met is not None:
+        alias_files = [f for f in alias_dir.glob("*.WB57") if f.is_file()]
+        if alias_files:
+            alias_dfs = []
+            for f in sorted(alias_files):
+                try:
+                    alias_dfs.append(load_alias_file(f))
+                except Exception as e:
+                    print(f"Warning: Could not load ALIAS file {f.name}: {e}")
+            if alias_dfs:
+                alias_all = pd.concat(alias_dfs, ignore_index=True).sort_values("Timestamp")
+                # Merge ALIAS ppmv with T/P met (nearest within 5 s — ALIAS is ~2 s resolution)
+                alias_mm = pd.merge_asof(
+                    alias_all,
+                    tp_met[["Timestamp", "P_hPa", "T_K"]].sort_values("Timestamp"),
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=5),
+                )
+                valid = alias_mm["H2O_ppmv"].notna() & alias_mm["T_K"].notna() & alias_mm["P_hPa"].notna()
+                alias_mm["Si_ALIAS"] = np.nan
+                if valid.sum() > 0:
+                    alias_mm.loc[valid, "Si_ALIAS"] = si_from_ppmv(
+                        alias_mm.loc[valid, "H2O_ppmv"],
+                        alias_mm.loc[valid, "T_K"],
+                        alias_mm.loc[valid, "P_hPa"],
+                    )
+                    alias_mm.loc[
+                        (alias_mm["Si_ALIAS"] < -1.0) | (alias_mm["Si_ALIAS"] > 2.0), "Si_ALIAS"
+                    ] = np.nan
+                alias_mm["T_C_ALIAS"] = alias_mm["T_K"] - 273.15
+                alias_mm["qv_alias"] = qv_from_ppmv(alias_mm["H2O_ppmv"])
+                alias_si = alias_mm[["Timestamp", "Si_ALIAS", "T_C_ALIAS", "qv_alias"]].dropna(subset=["Si_ALIAS"])
+                print(f"  ALIAS Si: {len(alias_si):,} valid records across "
+                      f"{alias_si['Timestamp'].dt.date.nunique()} dates")
+
+    # -----------------------------------------------------------------------
+    # Load JLH data (primary Si source)
+    # -----------------------------------------------------------------------
     dfs = []
     for f in sorted(files):
         try:
             dfs.append(load_crystal_face_nasa_file(f))
         except Exception as e:
             print(f"Warning: Could not load {f.name}: {e}")
-    
+
     combined = pd.concat(dfs, ignore_index=True)
-    
-    # Merge with MMS geolocation data on nearest timestamp
+
+    # Merge with geolocation on nearest timestamp
     if mms_geo is not None and not mms_geo.empty:
         combined = pd.merge_asof(
             combined.sort_values("Timestamp"),
@@ -230,9 +766,245 @@ def load_crystal_face_nasa(
             direction="nearest",
             tolerance=pd.Timedelta(seconds=10),
         )
-    
+
+    # -----------------------------------------------------------------------
+    # Build HW-derived rows for timestamps not covered by JLH
+    # and append them so Si coverage extends into JLH gaps and Jul 29.
+    # -----------------------------------------------------------------------
+    if hw_si is not None and not hw_si.empty:
+        # Rows in HW that have no nearby JLH timestamp (>10 s gap)
+        jlh_ts = combined["Timestamp"].dropna().sort_values()
+        hw_si_sorted = hw_si.sort_values("Timestamp")
+        hw_check = pd.merge_asof(
+            hw_si_sorted,
+            pd.DataFrame({"Timestamp": jlh_ts}),
+            on="Timestamp",
+            direction="nearest",
+            tolerance=pd.Timedelta(seconds=10),
+            suffixes=("", "_jlh"),
+        )
+        # Keep HW rows where JLH had no nearby match (i.e. JLH gap or missing date)
+        hw_gap_rows = hw_check[hw_check["Timestamp"].isna() == False].copy()
+        # Actually we want rows where JLH timestamp is absent after merge; since
+        # merge_asof always fills right key, check using a different approach:
+        # just fill all JLH-Si NaN using HW after final merge below.
+        # Instead, build HW-only frame for dates absent from JLH entirely.
+        jlh_dates = set(combined["Timestamp"].dropna().dt.date.unique())
+        hw_extra = hw_si[~hw_si["Timestamp"].dt.date.isin(jlh_dates)].copy()
+        if not hw_extra.empty:
+            # These are dates (e.g. Jul 29) with no JLH data at all
+            hw_extra_std = pd.DataFrame({
+                "Timestamp": hw_extra["Timestamp"],
+                "Si_HW": hw_extra["Si_HW"],
+                "T_C": hw_extra["T_C_HW"],
+                "qv_hw": hw_extra.get("qv_hw", np.nan),
+                "source_file": "HW-fallback",
+            })
+            if mms_geo is not None and not mms_geo.empty:
+                hw_extra_std = pd.merge_asof(
+                    hw_extra_std.sort_values("Timestamp"),
+                    mms_geo.sort_values("Timestamp"),
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=10),
+                )
+            combined = pd.concat([combined, hw_extra_std], ignore_index=True, sort=False)
+            print(f"  HW fallback: added {len(hw_extra_std):,} rows for "
+                  f"{hw_extra['Timestamp'].dt.date.nunique()} JLH-absent dates")
+
+        # Add HW rows for time gaps within shared dates.
+        # JLH gaps are missing rows (not NaN), so find HW timestamps that have
+        # no nearby JLH timestamp and add them as new rows.
+        combined_sorted = combined.sort_values("Timestamp")
+        jlh_ts_sorted = combined_sorted["Timestamp"].dropna().sort_values()
+        hw_all_shared = hw_si[hw_si["Timestamp"].dt.date.isin(jlh_dates)].copy()
+        if not hw_all_shared.empty:
+            hw_all_shared_sorted = hw_all_shared.sort_values("Timestamp")
+            jlh_ts_sorted_ns = jlh_ts_sorted.dt.as_unit("ns")
+            hw_all_shared_ns = hw_all_shared_sorted.copy()
+            hw_all_shared_ns["Timestamp"] = hw_all_shared_ns["Timestamp"].dt.as_unit("ns")
+
+            check = pd.merge_asof(
+                hw_all_shared_ns,
+                pd.DataFrame({"JLH_ts": jlh_ts_sorted_ns}),
+                left_on="Timestamp",
+                right_on="JLH_ts",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=10),
+            )
+            # HW rows with no nearby JLH timestamp = inside a JLH gap
+            hw_in_gaps = check[check["JLH_ts"].isna()].drop(columns=["JLH_ts"])
+            # Restore original timestamp resolution
+            hw_in_gaps = hw_in_gaps.copy()
+            hw_in_gaps["Timestamp"] = hw_in_gaps["Timestamp"].dt.as_unit("us")
+            if not hw_in_gaps.empty:
+                hw_gap_std = pd.DataFrame({
+                    "Timestamp": hw_in_gaps["Timestamp"],
+                    "Si_HW": hw_in_gaps["Si_HW"],
+                    "T_C": hw_in_gaps["T_C_HW"],
+                    "qv_hw": hw_in_gaps.get("qv_hw", np.nan),
+                    "source_file": "HW-gap-fill",
+                })
+                if mms_geo is not None and not mms_geo.empty:
+                    hw_gap_std = pd.merge_asof(
+                        hw_gap_std.sort_values("Timestamp"),
+                        mms_geo.sort_values("Timestamp"),
+                        on="Timestamp",
+                        direction="nearest",
+                        tolerance=pd.Timedelta(seconds=10),
+                    )
+                combined = pd.concat([combined, hw_gap_std], ignore_index=True, sort=False)
+                print(f"  HW gap-fill: added {len(hw_gap_std):,} rows for JLH gaps on shared dates")
+
+    # -----------------------------------------------------------------------
+    # Build ALIAS-derived rows for timestamps not covered by JLH or HW
+    # (third Si fallback -- checked against combined's coverage *after* the
+    # HW extra-date/gap-fill rows above, so ALIAS only fills what's left).
+    # -----------------------------------------------------------------------
+    if alias_si is not None and not alias_si.empty:
+        covered_dates = set(combined["Timestamp"].dropna().dt.date.unique())
+        alias_extra = alias_si[~alias_si["Timestamp"].dt.date.isin(covered_dates)].copy()
+        if not alias_extra.empty:
+            alias_extra_std = pd.DataFrame({
+                "Timestamp": alias_extra["Timestamp"],
+                "Si_ALIAS": alias_extra["Si_ALIAS"],
+                "T_C": alias_extra["T_C_ALIAS"],
+                "qv_alias": alias_extra.get("qv_alias", np.nan),
+                "source_file": "ALIAS-fallback",
+            })
+            if mms_geo is not None and not mms_geo.empty:
+                alias_extra_std = pd.merge_asof(
+                    alias_extra_std.sort_values("Timestamp"),
+                    mms_geo.sort_values("Timestamp"),
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=10),
+                )
+            combined = pd.concat([combined, alias_extra_std], ignore_index=True, sort=False)
+            print(f"  ALIAS fallback: added {len(alias_extra_std):,} rows for "
+                  f"{alias_extra['Timestamp'].dt.date.nunique()} JLH/HW-absent dates")
+
+        combined_sorted = combined.sort_values("Timestamp")
+        covered_ts_sorted = combined_sorted["Timestamp"].dropna().sort_values()
+        alias_all_shared = alias_si[alias_si["Timestamp"].dt.date.isin(covered_dates)].copy()
+        if not alias_all_shared.empty:
+            covered_ts_sorted_ns = covered_ts_sorted.dt.as_unit("ns")
+            alias_all_shared_ns = alias_all_shared.sort_values("Timestamp").copy()
+            alias_all_shared_ns["Timestamp"] = alias_all_shared_ns["Timestamp"].dt.as_unit("ns")
+
+            check = pd.merge_asof(
+                alias_all_shared_ns,
+                pd.DataFrame({"covered_ts": covered_ts_sorted_ns}),
+                left_on="Timestamp",
+                right_on="covered_ts",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=5),
+            )
+            # ALIAS rows with no nearby JLH/HW timestamp = inside a remaining gap
+            alias_in_gaps = check[check["covered_ts"].isna()].drop(columns=["covered_ts"])
+            alias_in_gaps = alias_in_gaps.copy()
+            alias_in_gaps["Timestamp"] = alias_in_gaps["Timestamp"].dt.as_unit("us")
+            if not alias_in_gaps.empty:
+                alias_gap_std = pd.DataFrame({
+                    "Timestamp": alias_in_gaps["Timestamp"],
+                    "Si_ALIAS": alias_in_gaps["Si_ALIAS"],
+                    "T_C": alias_in_gaps["T_C_ALIAS"],
+                    "qv_alias": alias_in_gaps.get("qv_alias", np.nan),
+                    "source_file": "ALIAS-gap-fill",
+                })
+                if mms_geo is not None and not mms_geo.empty:
+                    alias_gap_std = pd.merge_asof(
+                        alias_gap_std.sort_values("Timestamp"),
+                        mms_geo.sort_values("Timestamp"),
+                        on="Timestamp",
+                        direction="nearest",
+                        tolerance=pd.Timedelta(seconds=10),
+                    )
+                combined = pd.concat([combined, alias_gap_std], ignore_index=True, sort=False)
+                print(f"  ALIAS gap-fill: added {len(alias_gap_std):,} rows for JLH/HW gaps on shared dates")
+
+    combined["Timestamp"] = _round_timestamp_to_second(combined["Timestamp"])
+
+    # Merge Si_HW (and qv_hw) into JLH rows that don't already have it
+    hw_merge_cols = ["Timestamp", "Si_HW", "qv_hw"]
+    if hw_si is not None and not hw_si.empty:
+        available_hw_cols = [c for c in hw_merge_cols if c in hw_si.columns]
+        if "Si_HW" not in combined.columns:
+            combined = pd.merge_asof(
+                combined.sort_values("Timestamp"),
+                hw_si[available_hw_cols].sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=30),
+            )
+        else:
+            drop_cols = [c for c in available_hw_cols if c != "Timestamp" and c in combined.columns]
+            tmp = pd.merge_asof(
+                combined.sort_values("Timestamp").drop(columns=drop_cols),
+                hw_si[available_hw_cols].sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=30),
+            )
+            combined = tmp
+
+    # Merge Si_ALIAS (and qv_alias) into rows that don't already have it
+    alias_merge_cols = ["Timestamp", "Si_ALIAS", "qv_alias"]
+    if alias_si is not None and not alias_si.empty:
+        available_alias_cols = [c for c in alias_merge_cols if c in alias_si.columns]
+        if "Si_ALIAS" not in combined.columns:
+            combined = pd.merge_asof(
+                combined.sort_values("Timestamp"),
+                alias_si[available_alias_cols].sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=5),
+            )
+        else:
+            drop_cols = [c for c in available_alias_cols if c != "Timestamp" and c in combined.columns]
+            tmp = pd.merge_asof(
+                combined.sort_values("Timestamp").drop(columns=drop_cols),
+                alias_si[available_alias_cols].sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=5),
+            )
+            combined = tmp
+
+    # Merge P_hPa from met data into combined for qv_jlh computation
+    if tp_met is not None:
+        p_data = tp_met[["Timestamp", "P_hPa"]].dropna(subset=["P_hPa"]).sort_values("Timestamp")
+        if not p_data.empty:
+            if "P_hPa" not in combined.columns:
+                combined = pd.merge_asof(
+                    combined.sort_values("Timestamp"),
+                    p_data,
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=60),
+                )
+            else:
+                tmp_p = pd.merge_asof(
+                    combined.sort_values("Timestamp").drop(columns=["P_hPa"]),
+                    p_data,
+                    on="Timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta(seconds=60),
+                )
+                combined = tmp_p
+
+    if "Si_ALIAS" not in combined.columns:
+        combined["Si_ALIAS"] = np.nan
+
+    # Si = best from h2o_ranking: JLH first, then HW, then ALIAS
+    combined["Si"] = np.nan
+    for si_col in ("Si_JLH", "Si_HW", "Si_ALIAS"):
+        if si_col in combined.columns:
+            mask = combined["Si"].isna() & combined[si_col].notna()
+            combined.loc[mask, "Si"] = combined.loc[mask, si_col]
+
     combined["Campaign"] = "CRYSTAL-FACE-NASA"
-    
+
     return combined
 
 
@@ -258,15 +1030,50 @@ def extract_crystal_face_nasa_standard(df: pd.DataFrame) -> pd.DataFrame:
     lon_col = "Lon" if "Lon" in df.columns else next((c for c in df.columns if "lon" in c.lower()), None)
     alt_col = "Alt_m" if "Alt_m" in df.columns else next((c for c in df.columns if "alt" in c.lower() or "z" in c.lower()), None)
     
+    # qv_jlh from RH + T + P (all merged into combined)
+    rh_jlh = df.get("RH_JLH")
+    t_c = df.get("T_C")
+    p_hpa = df.get("P_hPa")
+    if rh_jlh is not None and t_c is not None and p_hpa is not None:
+        e_jlh = (np.asarray(rh_jlh, dtype=float) / 100.0) * es_ice_hPa(t_c)
+        qv_jlh = qv_from_e_P(e_jlh, p_hpa)
+    else:
+        qv_jlh = np.nan
+
+    qv_hw = df.get("qv_hw", np.nan)
+    qv_alias = df.get("qv_alias", np.nan)
+
+    # qv = best: jlh first, then hw, then alias
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src in (qv_jlh, qv_hw, qv_alias):
+        arr = src if isinstance(src, pd.Series) else pd.Series(src, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T
+    si_arr = df.get("Si", np.nan)
+    sw = sw_from_si(si_arr, t_c) if t_c is not None else np.nan
+
     result = pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df.get("T_C", np.nan),
+        "P_hPa": df.get("P_hPa", np.nan),
         "Si": df.get("Si", np.nan),
+        "Si_JLH": df.get("Si_JLH", np.nan),
+        "Si_HW": df.get("Si_HW", np.nan),
+        "Si_ALIAS": df.get("Si_ALIAS", np.nan),
+        "qv": qv,
+        "qv_jlh": qv_jlh if isinstance(qv_jlh, pd.Series) else np.nan,
+        "qv_hw": df.get("qv_hw", np.nan),
+        "qv_alias": df.get("qv_alias", np.nan),
+        "Sw": sw if isinstance(sw, (pd.Series, np.ndarray)) else np.nan,
         "Lat": df.get(lat_col, np.nan) if lat_col else np.nan,
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,
         "Campaign": df.get("Campaign", "CRYSTAL-FACE-NASA"),
         "source_file": df.get("source_file", ""),
     })
+
+    result["Timestamp"] = _round_timestamp_to_second(result["Timestamp"])
     
     return result

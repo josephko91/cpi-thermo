@@ -2,6 +2,13 @@
 IPHEX (Integrated Precipitation and Hydrology Experiment) campaign data parser.
 
 Campaign: IPHEX
+
+Data notes:
+- NASA Earthdata:
+    - https://doi.org/10.5067/GPMGV/IPHEX/MULTIPLE/DATA201
+    - https://doi.org/10.5067/GPMGV/IPHEX/NAV/DATA/001
+- UND Citation, Microphysics + Navigation
+
 Data Format: Whitespace-delimited text files with .iphex extension.
   - Column header line starts with 'Time' and contains 'Air_Temp'.
   - One units line follows the header; data starts on the line after that.
@@ -13,6 +20,19 @@ Required variables
 - FrostPoint: chilled mirror hygrometer measurement (°C)
 - Air_Temp: ambient air temperature (°C)
 - STATIC_PR: static pressure (hPa)
+- MixingRatio: Ophir TDL water vapor (ppmv); present in 21/32 flights
+
+Instrument diagnostics (see test_iphex.py, logs/diagnostics/iphex_diagnostics.json)
+------------------------------------------------------------------------------------
+- Chilled mirror (FrostPoint): preferred primary source. Median Si = -0.13,
+  27.5% of obs supersaturated. Physically accurate — equilibrium frost-point.
+  Available 24/32 flights (from 2014-04-22 onward).
+- Ophir TDL (MixingRatio ppmv): systematic dry bias vs chilled mirror (median
+  Si = -0.45, only 6.1% supersaturated). Closed-path inlet losses suspected
+  at near-0 °C. Use as fallback only.
+- DEWPT column: available all 32 flights but used as dew-point approximation
+  for frost-point, less accurate; not in default h2o_ranking.
+- CSI_M_Ratio: not deployed during IPHEX (zero valid values in all 32 files).
 
 Si derivation
 -------------
@@ -26,10 +46,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import pandas as pd
+
+from .utils import es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si
 
 
 IPHEX_INVALID_VALUES = {
@@ -59,6 +81,11 @@ IPHEX_REFERENCE_STATS = {
     "std": 0.3688,
 }
 
+_VALID_SOURCES: List[str] = ["chilled-mirror", "ophir-tdl"]
+_DEFAULT_H2O_RANKING: List[str] = ["chilled-mirror", "ophir-tdl"]
+_TDL_PPMV_MIN: float = 1.0
+_TDL_PPMV_MAX: float = 50_000.0
+
 
 def _es_ice_tetens(temp_c: pd.Series) -> pd.Series:
     t = pd.to_numeric(temp_c, errors="coerce")
@@ -71,6 +98,27 @@ def _compute_si_from_frostpoint(frost_point_c: pd.Series, air_temp_c: pd.Series)
     si = (e / ei) - 1.0
     si[~np.isfinite(si)] = np.nan
     return si
+
+
+def _compute_si_from_ppmv(
+    ppmv: pd.Series, air_temp_c: pd.Series, pressure_hpa: pd.Series
+) -> pd.Series:
+    ei = _es_ice_tetens(air_temp_c)
+    e = (ppmv / 1e6) * pressure_hpa
+    si = e / ei - 1.0
+    si[~np.isfinite(si)] = np.nan
+    return si
+
+
+def _resolve_si_best(df: pd.DataFrame, h2o_ranking: List[str]) -> pd.Series:
+    source_col = {"chilled-mirror": "Si_chilled_mirror", "ophir-tdl": "Si_ophir_tdl"}
+    si_best = pd.Series(np.nan, index=df.index)
+    for source in h2o_ranking:
+        col = source_col.get(source)
+        if col and col in df.columns:
+            fill_mask = si_best.isna() & df[col].notna()
+            si_best = si_best.where(~fill_mask, df[col])
+    return si_best
 
 
 def _find_data_start(lines: list[str]) -> tuple[Optional[int], Optional[int]]:
@@ -154,9 +202,14 @@ def _coerce_and_mask(series: pd.Series) -> pd.Series:
     return s
 
 
-def load_iphex_file(filepath: Union[str, Path]) -> pd.DataFrame:
-    """Load a single IPHEX .iphex file and derive Si from FrostPoint."""
+def load_iphex_file(
+    filepath: Union[str, Path],
+    h2o_ranking: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """Load a single IPHEX .iphex file and derive Si from h2o_ranking sources."""
     filepath = Path(filepath)
+    if h2o_ranking is None:
+        h2o_ranking = _DEFAULT_H2O_RANKING
 
     with open(filepath, "r") as f:
         lines = f.readlines()
@@ -206,7 +259,7 @@ def load_iphex_file(filepath: Union[str, Path]) -> pd.DataFrame:
         med_t = np.nanmedian(t_arr)
     if np.isfinite(med_t) and med_t > 150:
         df["Air_Temp"] = df["Air_Temp"] - 273.15
-    
+
     fp_arr = df["FrostPoint"].to_numpy(dtype=float)
     if np.all(np.isnan(fp_arr)):
         med_fp = np.nan
@@ -230,9 +283,22 @@ def load_iphex_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df.loc[(df["STATIC_PR"] < 50) | (df["STATIC_PR"] > 1100), "STATIC_PR"] = np.nan
     df.loc[df["FrostPoint"] > (df["Air_Temp"] + 20), "FrostPoint"] = np.nan
 
-    # Si from frost point
-    df["Si"] = _compute_si_from_frostpoint(df["FrostPoint"], df["Air_Temp"])
-    df.loc[(df["Si"] < -1.0) | (df["Si"] > 5.0), "Si"] = np.nan
+    # Si from chilled mirror (FrostPoint) — always computed as reference
+    df["Si_chilled_mirror"] = _compute_si_from_frostpoint(df["FrostPoint"], df["Air_Temp"])
+    df.loc[
+        (df["Si_chilled_mirror"] < -1.0) | (df["Si_chilled_mirror"] > 5.0),
+        "Si_chilled_mirror",
+    ] = np.nan
+
+    # Si from Ophir TDL (MixingRatio ppmv) — present in 21/32 flights
+    if "MixingRatio" in df.columns and "ophir-tdl" in h2o_ranking:
+        mr = _coerce_and_mask(df["MixingRatio"])
+        mr = mr.where((mr >= _TDL_PPMV_MIN) & (mr <= _TDL_PPMV_MAX), np.nan)
+        df["MixingRatio_ppmv"] = mr
+        df["Si_ophir_tdl"] = _compute_si_from_ppmv(mr, df["Air_Temp"], df["STATIC_PR"])
+        df.loc[(df["Si_ophir_tdl"] < -1.0) | (df["Si_ophir_tdl"] > 5.0), "Si_ophir_tdl"] = np.nan
+
+    df["Si"] = _resolve_si_best(df, h2o_ranking)
 
     # Timestamps: Time column is seconds-since-midnight on the flight date
     base_date = _extract_date_from_filename(filepath)
@@ -261,7 +327,20 @@ def load_iphex_file(filepath: Union[str, Path]) -> pd.DataFrame:
     return df
 
 
-def load_iphex(data_dir: Union[str, Path], pattern: str = "*.iphex") -> pd.DataFrame:
+def load_iphex(
+    data_dir: Union[str, Path],
+    pattern: str = "*.iphex",
+    h2o_ranking: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    if h2o_ranking is None:
+        h2o_ranking = _DEFAULT_H2O_RANKING
+
+    invalid = [s for s in h2o_ranking if s not in _VALID_SOURCES]
+    if invalid:
+        raise ValueError(
+            f"Unknown h2o_ranking source(s): {invalid}. Valid: {_VALID_SOURCES}"
+        )
+
     data_dir = Path(data_dir)
     files = [f for f in data_dir.glob(pattern) if f.is_file() and "Combined" not in f.name]
 
@@ -271,7 +350,7 @@ def load_iphex(data_dir: Union[str, Path], pattern: str = "*.iphex") -> pd.DataF
     dfs = []
     for f in sorted(files):
         try:
-            dfs.append(load_iphex_file(f))
+            dfs.append(load_iphex_file(f, h2o_ranking=h2o_ranking))
         except Exception as e:
             print(f"Warning: Could not load {f.name}: {e}")
 
@@ -285,11 +364,51 @@ def load_iphex(data_dir: Union[str, Path], pattern: str = "*.iphex") -> pd.DataF
 
 def extract_iphex_standard(df: pd.DataFrame) -> pd.DataFrame:
     """Return standardized columns for combined campaign output."""
+    # qv_chilled_mirror from FrostPoint + STATIC_PR
+    fp = df.get("FrostPoint")
+    p = df.get("STATIC_PR")
+    if fp is not None and p is not None:
+        e_cm = es_ice_hPa(np.asarray(fp, dtype=float))
+        qv_cm = qv_from_e_P(e_cm, np.asarray(p, dtype=float))
+        # qv_cm is derived from the same FrostPoint/STATIC_PR pair as
+        # Si_chilled_mirror, which is already clipped to a plausible [-1, 5]
+        # range (line ~289). qv_from_e_P has no upper bound of its own, so
+        # propagate the Si clip's NaN mask to keep the two consistent —
+        # otherwise a row with implausible Si can still carry an unbounded qv.
+        si_cm = df.get("Si_chilled_mirror")
+        if si_cm is not None:
+            qv_cm = pd.Series(qv_cm, index=df.index, dtype=float)
+            qv_cm = qv_cm.where(si_cm.notna(), np.nan)
+    else:
+        qv_cm = np.nan
+
+    # qv_ophir_tdl from MixingRatio_ppmv
+    mr_ppmv = df.get("MixingRatio_ppmv")
+    qv_otdl = qv_from_ppmv(np.asarray(mr_ppmv, dtype=float)) if mr_ppmv is not None else np.nan
+
+    # qv = best (chilled mirror first, then ophir)
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src in (qv_cm, qv_otdl):
+        arr = src if isinstance(src, pd.Series) else pd.Series(src, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("Air_Temp", np.nan))
+
     return pd.DataFrame(
         {
             "Timestamp": df.get("Timestamp", pd.NaT),
             "Tair_C": df.get("Air_Temp", np.nan),
+            "P_hPa": df.get("STATIC_PR", np.nan),
             "Si": df.get("Si", np.nan),
+            "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
+            "Si_ophir_tdl": df.get("Si_ophir_tdl", np.nan),
+            "qv": qv,
+            "qv_chilled_mirror": qv_cm,
+            "qv_ophir_tdl": qv_otdl,
+            "Sw": sw,
+            "MixingRatio_ppmv": df.get("MixingRatio_ppmv", np.nan),
             "Lat": df.get("POS_Lat", np.nan),
             "Lon": df.get("POS_Lon", np.nan),
             "Alt_m": df.get("POS_Alt", np.nan),

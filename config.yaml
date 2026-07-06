@@ -8,20 +8,33 @@ campaigns:
   ARM:
     path: ./data/raw/ARM
     pattern: "*.t4archive.gz"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       ARM SGP 2000 Spring Cloud Campaign.
       Binary .t4archive.gz files from Citation aircraft.
     
   CRYSTAL-FACE-NASA:
-    path: ./data/raw/CRYSTAL-FACE-NASA
-    pattern: "*"
+    path: ./data/raw/CRYSTAL-FACE-NASA/JW
+    pattern: "*.WB57"
+    h2o_ranking:
+      - JLH
+      - HW
+      - ALIAS
     description: >
       CRYSTAL-FACE NASA WB-57 aircraft.
       JPL Laser Hygrometer (JLH) data files.
       
   CRYSTAL-FACE-UND:
     path: ./data/raw/CRYSTAL-FACE-UND
-    pattern: "*MIS.CIT"
+    pattern: "*MIS*.CIT"
+    # MIS.CIT files live under the ND_MIS/ subdirectory; loader uses rglob.
+    # "*MIS*.CIT" (not "*MIS.CIT") also picks up the "_L2" revised-segment
+    # file that exists only for 2002-07-11 (a second, non-overlapping
+    # flight-segment recording covering 17:59-22:15 UTC that day).
+    h2o_ranking:
+      - LH-unspecified
+      - chilled-mirror
     description: >
       CRYSTAL-FACE UND Citation aircraft.
       MIS.CIT humidity files with corresponding MET.CIT meteorology.
@@ -29,6 +42,8 @@ campaigns:
   MC3E:
     path: ./data/raw/MC3E
     pattern: "*"
+    h2o_ranking:
+      - DLH
     description: >
       MC3E (Midlatitude Continental Convective Clouds Experiment).
       NASA ICARTT-style text files.
@@ -36,6 +51,8 @@ campaigns:
   MIDCIX:
     path: ./data/raw/MidCix
     pattern: "*"
+    h2o_ranking:
+      - JLH
     description: >
       MidCiX (Midlatitude Cirrus Experiment) WB-57.
       JLH (JPL Laser Hygrometer) text files.
@@ -50,6 +67,8 @@ campaigns:
   AIRS-II:
     path: ./data/raw/AIRS-II
     pattern: "*.nc"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       AIRS-II (Alliance Icing Research Study II).
       NetCDF files with LRT flight-level data.
@@ -57,22 +76,37 @@ campaigns:
   ATTREX:
     path: ./data/raw/ATTREX
     pattern: "*.ict"
+    # Ordered preference for Si_best: first instrument with valid data wins.
+    # Keys must match: "DLH", "NOAA", "UCATS"
+    h2o_ranking:
+      - DLH
+      - NOAA
+      - UCATS
     description: >
       ATTREX (Airborne Tropical TRopopause EXperiment).
       NASA ICARTT (.ict) files from Global Hawk.
+      Water vapor instruments (in preference order for Si_best): DLH-H2O, NOAA-H2O, UCATS-H2O.
 
   IPHEX:
     path: ./data/raw/IPHEX
     pattern: "*.iphex"
+    # Chilled mirror preferred: 27.5% supersaturated fraction vs 6.1% for Ophir TDL.
+    # TDL has a systematic dry bias (~0.32 Si offset); closed-path inlet losses suspected
+    # at near-0 °C. DEWPT available all 32 flights but not in ranking (less accurate).
+    h2o_ranking:
+      - chilled-mirror  # FrostPoint column; 24/32 flights; median Si = -0.13
+      - ophir-tdl       # MixingRatio ppmv; 24/32 flights; median Si = -0.45 (dry bias)
     description: >
       IPHEX (Integrated Precipitation and Hydrology Experiment).
-      Uses chilled-mirror FrostPoint with Air_Temp and STATIC_PR state variables.
-      Si is computed as supersaturation with respect to ice from FrostPoint vs Air_Temp,
-      with invalid value masking and physical-limit filters.
+      UND Citation over Appalachians, mixed-phase precipitation focus.
+      Primary Si from chilled-mirror FrostPoint; Ophir TDL (MixingRatio ppmv) as fallback.
+      State variables: Air_Temp (°C), STATIC_PR (hPa).
 
   ISDAC:
     path: ./data/raw/ISDAC/strapp-convair_bulk/CommaDelimited
     pattern: "*.txt"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       ISDAC (Indirect and Semi-Direct Aerosol Campaign) 2008 Convair 580.
       Comma-delimited STRAPP bulk microphysics files.
@@ -83,6 +117,8 @@ campaigns:
   POSIDON:
     path: ./data/raw/POSIDON
     pattern: "*.ict"
+    h2o_ranking:
+      - DLH
     description: >
       POSIDON 2016 NASA WB-57, western Pacific stratosphere.
       NASA ICARTT (.ict) files organised in instrument subdirectories
@@ -92,8 +128,10 @@ campaigns:
       Si is clipped to [-1, 1].
 
   ESCAPE:
-    path: ./data/raw/ESCAPE/learjet-state-measurements/jk4731582465
+    path: ./data/raw/ESCAPE/spec-learjet-state
     pattern: "ESCAPE-Page0_Learjet_*.ict"
+    h2o_ranking:
+      - chilled-mirror
     description: >
       ESCAPE Learjet state measurements (NASA ICARTT-like .ict files).
       Si is computed from dew point and ambient temperature with respect to ice.
@@ -101,6 +139,11 @@ campaigns:
   MACPEX:
     path: ./data/raw/MACPEX
     pattern: "*.ict"
+    h2o_ranking:
+      - HWV
+      - DLH
+      - JLH
+      - FISH
     description: >
       MACPEX (Mid-latitude Airborne Cirrus Properties Experiment) 2011 WB-57.
       NASA ICARTT (.ict) files organised in instrument subdirectories
@@ -111,20 +154,60 @@ campaigns:
   ICE-L:
     path: ./data/raw/ICE-L
     pattern: "*.PNI.nc"
+    h2o_ranking:
+      - chilled-mirror
+      - MRTDL
     description: >
       ICE-L RAF/Nimbus netCDF flight files.
       Uses ATX (temperature), PSXC (pressure), and RHUM (pre-calculated RH).
       Si is derived from RHUM as Si = RHUM/100 - 1.
 
+  MPACE:
+    path: ./data/raw/MPACE
+    pattern: "*.mpace"
+    description: >
+      MPACE (Mixed-Phase Arctic Cloud Experiment) 2004, UND Citation II,
+      Barrow AK. NASA Ames FFI 1001 text files (.mpace). No water-vapor
+      instrument was flown, so Si/qv are NaN for every record; Tair_C
+      (Air_Temp), P_hPa (STATIC_PR), Lat/Lon/Alt_m (Applanix POS) are
+      populated for CPI image fusion.
+
 # Output settings
 output:
   default_format: parquet
   standardized_columns:
-    - Timestamp      # UTC datetime
-    - Tair_C         # Air temperature (Celsius)
-    - Si             # Ice supersaturation (unitless, >0 = supersaturated)
-    - Lat            # Latitude (degrees)
-    - Lon            # Longitude (degrees)  
-    - Alt_m          # Altitude (meters)
-    - Campaign       # Campaign name
-    - source_file    # Original source file
+    - Timestamp           # UTC datetime
+    - Tair_C              # Air temperature (Celsius)
+    - P_hPa               # Atmospheric static pressure (hPa)
+    - Si                  # Ice supersaturation — best per h2o_ranking (unitless, >0 = supersaturated)
+    - Si_chilled_mirror   # Si from chilled-mirror hygrometer (ARM, ESCAPE, AIRS-II, IPHEX, ICE-L, CRYSTAL-FACE-UND)
+    - Si_DLH              # Si from Diode Laser Hygrometer (ATTREX, MACPEX, POSIDON, MC3E)
+    - Si_NOAA             # Si from NOAA TDL (ATTREX)
+    - Si_UCATS            # Si from UCATS (ATTREX)
+    - Si_HWV              # Si from Harvard Water Vapor (MACPEX)
+    - Si_JLH              # Si from JPL Laser Hygrometer (MACPEX, CRYSTAL-FACE-NASA, MIDCIX)
+    - Si_HW               # Si from Harvard Water Vapor (CRYSTAL-FACE-NASA)
+    - Si_ALIAS            # Si from ALIAS instrument (CRYSTAL-FACE-NASA; not loaded → NaN)
+    - Si_FISH             # Si from FISH instrument (MACPEX; not loaded → NaN)
+    - Si_MRTDL            # Si from Maycomm TDL long-path (ICE-L)
+    - Si_ophir_tdl        # Si from Ophir TDL (IPHEX)
+    - Si_LH_unspecified   # Si from unspecified Lyman-alpha hygrometer (CRYSTAL-FACE-UND)
+    - Si_frost_point      # Si from frost-point sensor (OLYMPEX)
+    - qv                  # Water vapor mass mixing ratio — best per h2o_ranking (g/kg)
+    - qv_chilled_mirror   # qv from chilled-mirror hygrometer (ARM, ESCAPE, AIRS-II, IPHEX, ICE-L, CRYSTAL-FACE-UND, ISDAC)
+    - qv_dlh              # qv from Diode Laser Hygrometer (ATTREX, MACPEX, POSIDON, MC3E)
+    - qv_noaa             # qv from NOAA TDL (ATTREX)
+    - qv_ucats            # qv from UCATS (ATTREX)
+    - qv_hwv              # qv from Harvard Water Vapor (MACPEX)
+    - qv_jlh              # qv from JPL Laser Hygrometer (MACPEX, CRYSTAL-FACE-NASA, MIDCIX)
+    - qv_hw               # qv from Harvard Water Vapor (CRYSTAL-FACE-NASA)
+    - qv_mrtdl            # qv from Maycomm TDL long-path (ICE-L)
+    - qv_ophir_tdl        # qv from Ophir TDL (IPHEX)
+    - qv_lh_unspecified   # qv from unspecified Lyman-alpha hygrometer (CRYSTAL-FACE-UND)
+    - qv_frost_point      # qv from frost-point sensor (OLYMPEX)
+    - Sw                  # Supersaturation w.r.t. liquid water (unitless, >0 = supersaturated w.r.t. liquid)
+    - Lat                 # Latitude (degrees)
+    - Lon                 # Longitude (degrees)
+    - Alt_m               # Altitude (meters)
+    - Campaign            # Campaign name
+    - source_file         # Original source file

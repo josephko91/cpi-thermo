@@ -7,9 +7,14 @@ measurements from various field campaigns.
 
 from .utils import (
     es_ice,
+    es_ice_hPa,
+    es_liq_hPa,
     si_from_frost_point,
     si_from_ppmv,
     si_from_rh,
+    qv_from_ppmv,
+    qv_from_e_P,
+    sw_from_si,
     clean_column_name,
     parse_columns_with_units,
     extract_takeoff_date,
@@ -28,6 +33,7 @@ from .ice_l import load_ice_l
 from .iphex import load_iphex
 from .isdac import load_isdac
 from .macpex import load_macpex, extract_macpex_standard
+from .mpace import load_mpace, extract_mpace_standard
 from .posidon import load_posidon
 
 # Campaign registry for easy iteration
@@ -43,6 +49,7 @@ CAMPAIGN_LOADERS = {
     "IPHEX": load_iphex,
     "ISDAC": load_isdac,
     "MACPEX": load_macpex,
+    "MPACE": load_mpace,
     "POSIDON": load_posidon,
     "ESCAPE": load_escape,
     "ICE-L": load_ice_l,
@@ -51,9 +58,14 @@ CAMPAIGN_LOADERS = {
 __all__ = [
     # Utility functions
     "es_ice",
+    "es_ice_hPa",
+    "es_liq_hPa",
     "si_from_frost_point",
     "si_from_ppmv",
     "si_from_rh",
+    "qv_from_ppmv",
+    "qv_from_e_P",
+    "sw_from_si",
     "clean_column_name",
     "parse_columns_with_units",
     "extract_takeoff_date",
@@ -70,6 +82,8 @@ __all__ = [
     "load_isdac",
     "load_macpex",
     "extract_macpex_standard",
+    "load_mpace",
+    "extract_mpace_standard",
     "load_posidon",
     "load_escape",
     "load_ice_l",

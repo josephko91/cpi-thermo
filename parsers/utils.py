@@ -11,6 +11,9 @@ import pandas as pd
 from datetime import datetime
 from typing import List, Optional
 
+# Molar mass ratio water / dry air (kg/kg per mol/mol)
+_EPSILON: float = 18.015 / 28.964  # ≈ 0.6220
+
 
 # =============================================================================
 # Thermodynamic Functions
@@ -97,6 +100,46 @@ def si_from_ppmv(wv_ppmv: np.ndarray, temp_K: np.ndarray, pressure_hPa: np.ndarr
     return result
 
 
+def es_ice_hPa(T_C: np.ndarray) -> np.ndarray:
+    """Saturation vapor pressure over ice (hPa), Murphy & Koop 2005."""
+    return es_ice(T_C) / 100.0
+
+
+def es_liq_hPa(T_C: np.ndarray) -> np.ndarray:
+    """Saturation vapor pressure over liquid water (hPa), Murphy & Koop 2005."""
+    T_K = np.asarray(T_C, dtype=float) + 273.15
+    ln_e = (
+        54.842763
+        - 6763.22 / T_K
+        - 4.21 * np.log(T_K)
+        + 0.000367 * T_K
+        + np.tanh(0.0415 * (T_K - 218.8))
+        * (53.878 - 1331.22 / T_K - 9.44523 * np.log(T_K) + 0.014025 * T_K)
+    )
+    return np.exp(ln_e) / 100.0  # Pa → hPa
+
+
+def qv_from_ppmv(ppmv: np.ndarray) -> np.ndarray:
+    """Water vapor mass mixing ratio (g/kg) from volume mixing ratio (ppmv)."""
+    return np.asarray(ppmv, dtype=float) * _EPSILON * 1e-3
+
+
+def qv_from_e_P(e_hPa: np.ndarray, P_hPa: np.ndarray) -> np.ndarray:
+    """Water vapor mass mixing ratio (g/kg) from vapor pressure e and total pressure P (both hPa)."""
+    e = np.asarray(e_hPa, dtype=float)
+    P = np.asarray(P_hPa, dtype=float)
+    denom = P - e
+    with np.errstate(invalid="ignore", divide="ignore"):
+        r = np.where((denom > 0) & np.isfinite(e) & np.isfinite(P), _EPSILON * e / denom, np.nan)
+    return r * 1000.0
+
+
+def sw_from_si(Si: np.ndarray, T_C: np.ndarray) -> np.ndarray:
+    """Supersaturation w.r.t. liquid water from Si (w.r.t. ice) and temperature (°C)."""
+    si_arr = np.asarray(Si, dtype=float)
+    return (1.0 + si_arr) * (es_ice_hPa(T_C) / es_liq_hPa(T_C)) - 1.0
+
+
 def si_from_rh(rh_percent: np.ndarray) -> np.ndarray:
     """
     Compute ice supersaturation from relative humidity with respect to ice.
@@ -115,8 +158,14 @@ def si_from_rh(rh_percent: np.ndarray) -> np.ndarray:
 
 
 def normalize_datetime_utc(values: pd.Series) -> pd.Series:
-    """Normalize datetime values to UTC nanosecond precision."""
-    return pd.to_datetime(values, utc=True, errors="coerce").astype("datetime64[ns, UTC]")
+    """Normalize datetime values to UTC nanosecond precision.
+
+    Uses dt.as_unit("ns") rather than astype() because in pandas 2.0+ the
+    default resolution for tz-aware datetimes is microseconds, and astype()
+    can silently preserve the original resolution in some build configurations.
+    """
+    parsed = pd.to_datetime(values, utc=True, errors="coerce")
+    return parsed.dt.as_unit("ns")
 
 
 # =============================================================================

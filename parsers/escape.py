@@ -7,8 +7,10 @@ Data Format: NASA ICARTT-like CSV text (.ict)
 
 Notes
 -----
+- Source: NCAR EOL (https://data.eol.ucar.edu/dataset/list?project=619&children=project)
 - Data files can contain repeated pseudo-headers; parser selects the most likely
   data header (with `Time_Start` and many comma-separated columns).
+- water vapor: EdgeTech Chilled Mirror C-137
 - Ice supersaturation (Si) is computed from dew point and ambient temperature
   using saturation vapor pressure over ice (Murphy & Koop 2005 in utils.es_ice).
 """
@@ -24,7 +26,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from .utils import clean_column_name, si_from_frost_point, COMMON_NA_VALUES
+from .utils import clean_column_name, si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si, COMMON_NA_VALUES
 
 
 ESCAPE_FILE_RE = re.compile(r"ESCAPE-Page0_Learjet_(\d{8})_R\d+\.ict$", re.IGNORECASE)
@@ -260,6 +262,10 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
     dew_col = _choose_column(df, ["Dew", "DewPoint", "Dew_Point", "Td"])
     pres_col = _choose_column(df, ["Pressure", "Pres", "P", "Static_Pressure", "P_hPa"])
     alt_col = _choose_column(df, ["Palt", "Alt", "Altitude", "GPS_Alt", "Press_Alt"])
+    # Prevent the soft-contains search from matching a pressure altitude column
+    # (e.g. "Palt" matches "p") as a direct static-pressure column.
+    if pres_col is not None and pres_col == alt_col:
+        pres_col = None
     lat_col = _choose_column(df, ["Lat", "Latitude", "GPS_Lat"])
     lon_col = _choose_column(df, ["Long", "Lon", "Longitude", "GPS_Lon"])
     time_col = _choose_column(df, ["Time_Start", "Time", "UTC", "Time_UTC"])
@@ -294,14 +300,47 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
         bad_alt = (df[alt_col] < -500) | (df[alt_col] > 25000)
         df.loc[bad_alt, alt_col] = np.nan
 
+    # Temperature sensor failure: |Tair - T_ISA| > 40°C is a gross physical
+    # failure at any altitude (same ISA formula/tolerance as QC2's
+    # T_altitude_inconsistent check in scripts/qa_checks.py, for consistency).
+    # Observed on 2022-06-10 where the Learjet's Tair sensor read +12 to
+    # +16°C from ~8 km up to 17 km, corrupting Si and qv for those rows.
+    # A fixed "Tair > -20°C at Alt > 10 km" threshold caught only the upper
+    # portion of this same failure — e.g. +15.7°C at ~8.1 km (P_hPa≈348, dev
+    # from ISA ≈ +54°C) drove qv to an unphysical ~278 g/kg but fell below
+    # the old 10 km cutoff. The ISA-deviation form catches the whole failure
+    # regardless of altitude.
+    if temp_col and alt_col:
+        h_arr = np.asarray(df[alt_col], dtype=float)
+        t_isa_k = np.where(
+            h_arr <= 11000,
+            288.15 - 6.5e-3 * h_arr,
+            np.where(h_arr <= 20000, 216.65, 216.65 - 1e-3 * (h_arr - 20000)),
+        )
+        t_isa_c = t_isa_k - 273.15
+        sensor_failure = (
+            df[temp_col].notna() & df[alt_col].notna()
+            & ((df[temp_col].to_numpy(dtype=float) - t_isa_c) > 40.0)
+        )
+        n_fail = int(sensor_failure.sum())
+        if n_fail > 0:
+            df.loc[sensor_failure, temp_col] = np.nan
+            if dew_col:
+                df.loc[sensor_failure, dew_col] = np.nan
+            print(
+                f"  ESCAPE QC: nulled {n_fail:,} rows where Tair exceeded ISA by "
+                f"> 40°C (temperature sensor failure — check source file)"
+            )
+
     # Derived variables
     if dew_col and temp_col:
-        df["Si"] = si_from_frost_point(df[dew_col], df[temp_col])
+        df["Si_chilled_mirror"] = si_from_frost_point(df[dew_col], df[temp_col])
         # Plausibility: Si < -1 is impossible; very high values likely artifacts.
-        bad_si = (df["Si"] < -1) | (df["Si"] > 5)
-        df.loc[bad_si, "Si"] = np.nan
+        bad_si = (df["Si_chilled_mirror"] < -1) | (df["Si_chilled_mirror"] > 5)
+        df.loc[bad_si, "Si_chilled_mirror"] = np.nan
     else:
-        df["Si"] = np.nan
+        df["Si_chilled_mirror"] = np.nan
+    df["Si"] = df["Si_chilled_mirror"]
 
     # Timestamp from flight date + seconds
     flight_date = _extract_flight_date(filepath.name, metadata)
@@ -313,6 +352,38 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
 
     # Canonical convenience columns
     df["T_C"] = df[temp_col] if temp_col else np.nan
+
+    # Pressure: use direct column if available; otherwise derive from pressure
+    # altitude (Palt, already normalised to metres by _normalize_altitude_m)
+    # via the ICAO standard atmosphere — exact by definition.
+    if pres_col:
+        df["P_hPa"] = df[pres_col].copy()
+    elif alt_col and "palt" in alt_col.lower():
+        h_m = np.asarray(df[alt_col], dtype=float)  # metres after normalisation
+        p_icao = np.where(
+            h_m <= 11000,
+            1013.25 * (1.0 - 2.25577e-5 * h_m) ** 5.25588,
+            226.32 * np.exp(-1.57688e-4 * (h_m - 11000)),
+        )
+        df["P_hPa"] = np.where(np.isfinite(h_m), p_icao, np.nan)
+        # A stuck/erroneous Palt reading can pass the generic [-500, 25000] m
+        # altitude bound above (line ~300) while still being unrealistic for
+        # this aircraft, producing implausible ICAO pressure. Bound the
+        # *derived* P_hPa the same way a direct pressure column already is
+        # (line ~291) and null the offending Palt/Alt_m too, since it's the
+        # source of the bad derivation.
+        bad_derived_p = (df["P_hPa"] < 50) | (df["P_hPa"] > 1100)
+        n_bad = int(bad_derived_p.sum())
+        if n_bad > 0:
+            df.loc[bad_derived_p, "P_hPa"] = np.nan
+            df.loc[bad_derived_p, alt_col] = np.nan
+            print(
+                f"  ESCAPE QC: nulled {n_bad:,} rows where ICAO-derived P_hPa from "
+                f"Palt fell outside [50, 1100] hPa (stuck/erroneous Palt sensor — "
+                f"check source file)"
+            )
+    else:
+        df["P_hPa"] = np.nan
     df["Lat"] = df[lat_col] if lat_col else np.nan
     df["Lon"] = df[lon_col] if lon_col else np.nan
     df["Alt_m"] = df[alt_col] if alt_col else np.nan
@@ -346,10 +417,32 @@ def load_escape(data_dir: Union[str, Path], pattern: str = "ESCAPE-Page0_Learjet
 
 def extract_escape_standard(df: pd.DataFrame) -> pd.DataFrame:
     """Extract standardized columns for downstream campaign combination."""
+    # qv_chilled_mirror from dew/frost point + pressure
+    # The loader uses si_from_frost_point(dew_col, temp_col) → treat dew_col as frost point
+    # Find the dew-point column via Si_chilled_mirror: recompute e = es_ice(Td)
+    # We don't re-detect dew_col here; derive e from Si_cm and T instead:
+    #   Si_cm = e/es_ice(T) - 1  → e = (Si_cm + 1) * es_ice(T)
+    si_cm = df.get("Si_chilled_mirror")
+    t_c = df.get("T_C")
+    p_hpa = df.get("P_hPa")
+    if si_cm is not None and t_c is not None and p_hpa is not None:
+        e_cm = (np.asarray(si_cm, dtype=float) + 1.0) * es_ice_hPa(t_c)
+        qv_cm = qv_from_e_P(e_cm, p_hpa)
+    else:
+        qv_cm = np.nan
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("T_C", np.nan))
+
     return pd.DataFrame({
         "Timestamp": df.get("Timestamp", pd.NaT),
         "Tair_C": df.get("T_C", np.nan),
+        "P_hPa": df.get("P_hPa", np.nan),
         "Si": df.get("Si", np.nan),
+        "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
+        "qv": qv_cm,
+        "qv_chilled_mirror": qv_cm,
+        "Sw": sw,
         "Lat": df.get("Lat", np.nan),
         "Lon": df.get("Lon", np.nan),
         "Alt_m": df.get("Alt_m", np.nan),

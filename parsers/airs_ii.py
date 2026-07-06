@@ -2,8 +2,20 @@
 AIRS-II (Alliance Icing Research Study II) campaign data parser.
 
 Campaign: AIRS-II
-Data Source: https://data.eol.ucar.edu/project/AIRS-II
-Data Format: NetCDF files with LRT (Low-Rate) flight-level data
+- Data Source: https://data.eol.ucar.edu/project/AIRS-II
+- Data Format: NetCDF files with LRT (Low-Rate) flight-level data
+- Variables: relative humidity (RHUM), air temperature (ATX), LAT, LON, ALT
+- Derived: Si (from RHUM)
+- Notes:
+    - ATX = RAF best-estimate ambient temperature, derived from ATWH (Raw heated Rosemount air temperature) for AIRS-II
+    - Relative humidity was derived from the RAF best-estimate air temperature (ATX) and primary chilled-mirror dewpoint measurement (DPXC)
+    - Relative humidity (RHUM) was derived primarily from the DPBC chilled-mirror dew point sensor (reported as DPXC), which was selected as the reference humidity measurement for most flights.
+    - Two collocated dew point sensors were used: DPTC (faster response but limited dynamic range) and DPBC (slower response but capable of measuring larger dew point depressions).
+    - The sensors generally showed good agreement and correlation when operating normally.
+    - The primary data-quality issue was water ingestion during flight, which occasionally caused sensor drift.
+    - Humidity measurements were evaluated flight-by-flight, and the best-performing dew point sensor was selected when necessary.
+    - Overall, the campaign reported good-quality humidity measurements, with occasional degradation during periods affected by water ingestion.
+    - SpectraSensors TDL hygrometers used but only voltages provided in data. So these data were not used in this dataset.  
 """
 
 import pandas as pd
@@ -11,6 +23,8 @@ import numpy as np
 import xarray as xr
 from pathlib import Path
 from typing import Union
+
+from .utils import es_ice_hPa, qv_from_e_P, sw_from_si
 
 
 def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -53,12 +67,22 @@ def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
         atx = atx[valid_mask]
         times = np.asarray(times).ravel()[valid_mask]
         
-        # Extract position data if available
+        # Extract pressure and position data if available
+        pres_raw = None
+        for pvar in ("PSXC", "PRES", "PSX", "P"):
+            if pvar in ds.variables:
+                pres_raw = np.asarray(ds[pvar].values).ravel().astype(float)
+                break
+        if pres_raw is None:
+            pres_raw = np.full(len(times), np.nan)
+
         lat = np.asarray(ds.get("LAT", ds.get("LATC", [np.nan] * len(times)))).ravel()
         lon = np.asarray(ds.get("LON", ds.get("LONC", [np.nan] * len(times)))).ravel()
         alt = np.asarray(ds.get("ALT", ds.get("GGALT", [np.nan] * len(times)))).ravel()
         
-        # Apply same mask to position data
+        # Apply same mask to position/pressure data
+        if len(pres_raw) == len(valid_mask):
+            pres_raw = pres_raw[valid_mask]
         if len(lat) == len(valid_mask):
             lat = lat[valid_mask]
             lon = lon[valid_mask]
@@ -70,16 +94,23 @@ def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
             "Timestamp": pd.to_datetime(times[:n], utc=True),
             "RHUM": rh[:n],
             "ATX_C": atx[:n],
+            "P_hPa": pres_raw[:n] if len(pres_raw) >= n else np.nan,
             "Lat": lat[:n] if len(lat) >= n else np.nan,
             "Lon": lon[:n] if len(lon) >= n else np.nan,
             "Alt_m": alt[:n] if len(alt) >= n else np.nan,
         })
-        
+
         df = df.sort_values("Timestamp").reset_index(drop=True)
-        
-        # Si is RHUM/100 - 1 (since RHUM is already w.r.t. ice in some cases)
-        # Note: Check metadata for actual RH type
-        df["Si"] = df["RHUM"] / 100.0 - 1.0
+
+        # Pressure sanity check: convert Pa → hPa if values look like Pa
+        p_med = df["P_hPa"].median()
+        if np.isfinite(p_med) and p_med > 2000:
+            df["P_hPa"] = df["P_hPa"] / 100.0
+        df.loc[(df["P_hPa"] < 50) | (df["P_hPa"] > 1100), "P_hPa"] = np.nan
+
+        # Si from chilled mirror (RHUM derived from DPXC dew point)
+        df["Si_chilled_mirror"] = df["RHUM"] / 100.0 - 1.0
+        df["Si"] = df["Si_chilled_mirror"]
         
         df["source_file"] = filepath.name
         
@@ -141,10 +172,28 @@ def extract_airs_ii_standard(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Standardized data with Timestamp, Tair_C, Si, Lat, Lon, Alt_m, Campaign.
     """
+    # qv_chilled_mirror from RHUM + T + P
+    rhum = df.get("RHUM")
+    t_c = df.get("ATX_C")
+    p_hpa = df.get("P_hPa")
+    if rhum is not None and t_c is not None and p_hpa is not None:
+        e_cm = (np.asarray(rhum, dtype=float) / 100.0) * es_ice_hPa(t_c)
+        qv_cm = qv_from_e_P(e_cm, p_hpa)
+    else:
+        qv_cm = np.nan
+
+    # Sw from Si and T
+    sw = sw_from_si(df.get("Si", np.nan), df.get("ATX_C", np.nan))
+
     return pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df.get("ATX_C", np.nan),
+        "P_hPa": df.get("P_hPa", np.nan),
         "Si": df.get("Si", np.nan),
+        "Si_chilled_mirror": df.get("Si_chilled_mirror", np.nan),
+        "qv": qv_cm,
+        "qv_chilled_mirror": qv_cm,
+        "Sw": sw,
         "Lat": df.get("Lat", np.nan),
         "Lon": df.get("Lon", np.nan),
         "Alt_m": df.get("Alt_m", np.nan),

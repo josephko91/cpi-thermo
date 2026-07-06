@@ -38,6 +38,13 @@ This repository provides tools and scripts to create a unified dataset that merg
    python main.py
    ```
 
+## Campaign Coverage Notes
+
+**MPACE (Mixed-Phase Arctic Cloud Experiment):** CPI imagery exists for MPACE but no
+environmental (Tair, Si) parser has been implemented. The MPACE aircraft did not carry a
+dedicated water vapor instrument suitable for deriving ice supersaturation (Si), so those
+CPI images cannot be paired with Si measurements and are excluded from the combined dataset.
+
 ## Adding New Campaign Parsers
 - Add a new Python file in the `parsers/` directory following the existing parser structure.
 - Update `main.py` or configuration as needed to include the new parser.

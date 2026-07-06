@@ -55,7 +55,7 @@ from typing import Dict, List, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import si_from_ppmv
+from .utils import si_from_ppmv, qv_from_ppmv, sw_from_si
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,8 @@ MACPEX_MISSING_FLAGS: list = [
     -8888, -8888.88,
     -7777, -7777.77,
     -999.99,
+    # MMS-FlightPath (LAT, LONG, TAS) missing-value codes, per its ICARTT header
+    -99999, -999999, -999,
 ]
 
 #: Instrument folder → time-column name mapping.
@@ -89,12 +91,19 @@ MACPEX_TIME_COLS: Dict[str, str] = {
     "MMS-MetData":    "Time_Start",
     "CIMS-H2O":       "Time_Start",
     "CLH-Enhanced":   "Time_Start",
+    # --- navigation (position: P_ALT, LAT, LONG, TAS) ---
+    "MMS-FlightPath": "TIME_UTC",
 }
 _TIME_FALLBACKS = ["Time_Start", "Time_Mid", "Time_Stop", "time_utc", "Time_UTC"]
 
 #: MMS-MetData raw-integer scaling factors (documented in MACPEX ICT headers).
 MMS_T_SCALE = 0.01   # raw integer × 0.01 → Kelvin
 MMS_P_SCALE = 0.10   # raw integer × 0.10 → hPa
+
+#: MMS-FlightPath raw-integer scaling factors (per its ICARTT header:
+#: "1.0, 0.001, 0.001, 0.1" for P_ALT, LAT, LONG, TAS respectively).
+MMS_ALT_SCALE = 1.0     # raw integer × 1.0   → metres (already unscaled)
+MMS_LATLON_SCALE = 0.001  # raw integer × 0.001 → degrees
 
 #: Preferred water-vapor source column names after instrument-prefix renaming.
 #: These names must cover both short and long folder-name variants (the prefix
@@ -117,6 +126,13 @@ WV_SOURCE_COLS: Dict[str, List[str]] = {
 }
 
 WvSource = Literal["DLH", "HWV", "JLH"]
+
+# Map h2o_ranking strings to WvSource keys
+H2O_RANK_TO_WV: Dict[str, WvSource] = {
+    "HWV": "HWV",
+    "DLH": "DLH",
+    "JLH": "JLH",
+}
 
 #: Physical validity bounds applied before Si calculation.
 T_BOUNDS_K    = (150.0, 350.0)   # MACPEX WB-57 tropopause region
@@ -228,7 +244,7 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
         df["datetime_utc"] = flight_date + pd.to_timedelta(elapsed, unit="s")
     else:
         df["datetime_utc"] = pd.NaT
-    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").astype("datetime64[ns, UTC]")
+    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").dt.as_unit("ns")
 
     # --- rename data columns with instrument prefix so they survive merging ---
     prefix = instrument  # e.g. "DLH-H2O", "MMS-MetData"
@@ -289,10 +305,14 @@ def _load_and_merge(
               f"{len(combined.columns)} cols")
 
     # Merge across instruments with merge_asof on datetime_utc
-    # Start with MMS-MetData (navigation/met state) as the left frame so every
-    # row has valid T and P whenever possible.
+    # Start with MMS (navigation/met state) as the left frame so every
+    # row has valid T and P whenever possible.  MACPEX uses folder "MMS-Met";
+    # other mirror sites may use "MMS-MetData".
     instruments = list(instrument_dfs.keys())
-    primary = "MMS-MetData" if "MMS-MetData" in instruments else instruments[0]
+    primary = next(
+        (i for i in instruments if i in ("MMS-MetData", "MMS-Met")),
+        instruments[0],
+    )
     other = [i for i in instruments if i != primary]
 
     merged = instrument_dfs[primary].copy()
@@ -357,7 +377,8 @@ def _find_mms_col(df: pd.DataFrame, suffix: str) -> Optional[str]:
 def load_macpex(
     data_dir: Union[str, Path],
     pattern: str = "*.ict",
-    wv_source: WvSource = "DLH",
+    wv_source: WvSource = "HWV",
+    h2o_ranking: Optional[List[str]] = None,
     time_tolerance: str = "1s",
 ) -> pd.DataFrame:
     """
@@ -418,6 +439,15 @@ def load_macpex(
     KeyError
         If the selected water-vapor column cannot be located after merging.
     """
+    # h2o_ranking (from config.yaml) takes precedence over wv_source default.
+    # Use the first ranking entry that maps to a known WvSource.
+    if h2o_ranking:
+        for rank in h2o_ranking:
+            mapped = H2O_RANK_TO_WV.get(rank)
+            if mapped is not None:
+                wv_source = mapped
+                break
+
     if wv_source not in WV_SOURCE_COLS:
         raise ValueError(
             f"wv_source must be one of {list(WV_SOURCE_COLS)}, got '{wv_source}'"
@@ -474,6 +504,38 @@ def load_macpex(
     df["P_hPa"] = df["P_hPa"].replace(
         [f * MMS_P_SCALE for f in MACPEX_MISSING_FLAGS], np.nan
     )
+
+    # ------------------------------------------------------------------
+    # 2b. Scale MMS-FlightPath position (LAT, LONG, P_ALT) from raw integers
+    # ------------------------------------------------------------------
+    lat_raw_col = _find_col(df, ["MMS-FlightPath_LAT"])
+    lon_raw_col = _find_col(df, ["MMS-FlightPath_LONG"])
+    alt_raw_col = _find_col(df, ["MMS-FlightPath_P_ALT"])
+
+    if lat_raw_col is not None and lon_raw_col is not None:
+        df["Lat_deg"] = df[lat_raw_col] * MMS_LATLON_SCALE
+        df["Lon_deg"] = df[lon_raw_col] * MMS_LATLON_SCALE
+        df["Lat_deg"] = df["Lat_deg"].replace(
+            [f * MMS_LATLON_SCALE for f in MACPEX_MISSING_FLAGS], np.nan
+        )
+        df["Lon_deg"] = df["Lon_deg"].replace(
+            [f * MMS_LATLON_SCALE for f in MACPEX_MISSING_FLAGS], np.nan
+        )
+        print(
+            f"  Scaled position: {lat_raw_col}/{lon_raw_col} × {MMS_LATLON_SCALE} "
+            f"({df['Lat_deg'].notna().sum():,} valid rows)"
+        )
+    else:
+        print("  WARNING: MMS-FlightPath LAT/LONG columns not found — Alt_m/Lat/Lon will be NaN.")
+
+    if alt_raw_col is not None:
+        # P_ALT scale factor is 1.0 — already in metres, no conversion needed.
+        df["Alt_m"] = df[alt_raw_col] * MMS_ALT_SCALE
+        df["Alt_m"] = df["Alt_m"].replace(
+            [f * MMS_ALT_SCALE for f in MACPEX_MISSING_FLAGS], np.nan
+        )
+    else:
+        df["Alt_m"] = np.nan
 
     # ------------------------------------------------------------------
     # 3. Physical bounds on T and P
@@ -562,7 +624,12 @@ def load_macpex(
     ] = np.nan
 
     # ------------------------------------------------------------------
-    # 7. Optional Si for alternate water-vapor sources
+    # 6b. Expose primary source as its named instrument column
+    # ------------------------------------------------------------------
+    df[f"Si_{wv_source}"] = df["Si"]
+
+    # ------------------------------------------------------------------
+    # 7. Compute Si for alternate water-vapor sources
     # ------------------------------------------------------------------
     for src, alt_col in alt_wv_cols.items():
         if alt_col is None:
@@ -583,6 +650,22 @@ def load_macpex(
                 f"  Also computed {si_col} using {alt_col} "
                 f"({alt_valid.sum():,} valid rows)"
             )
+
+    # FISH instrument not loaded; create NaN placeholder
+    df["Si_FISH"] = np.nan
+
+    # ------------------------------------------------------------------
+    # 7b. Si = best from h2o_ranking
+    # ------------------------------------------------------------------
+    ranking = h2o_ranking or list(H2O_RANK_TO_WV.keys())
+    df["Si"] = np.nan
+    for rank in ranking:
+        wv_key = H2O_RANK_TO_WV.get(rank)
+        si_col = f"Si_{wv_key}" if wv_key else None
+        if si_col and si_col in df.columns:
+            mask = df["Si"].isna() & df[si_col].notna()
+            df.loc[mask, "Si"] = df.loc[mask, si_col]
+    print(f"  Si ranking applied: {ranking}")
 
     # ------------------------------------------------------------------
     # 8. Derived/convenience columns
@@ -612,19 +695,21 @@ def extract_macpex_standard(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Columns: Timestamp, Tair_C, Si, Lat, Lon, Alt_m, Campaign, source_file.
     """
-    # Position columns may be prefixed with the MMS instrument name
+    # Position comes from MMS-FlightPath (Lat_deg/Lon_deg/Alt_m, scaled from
+    # raw integers in load_macpex). Fall back to older candidate names/
+    # substring search in case load_macpex wasn't used to build df.
     lat_col = _find_col(
-        df, ["MMS-Met_LAT", "MMS-Met_Lat",
+        df, ["Lat_deg", "MMS-Met_LAT", "MMS-Met_Lat",
              "MMS-MetData_LAT", "MMS-MetData_Lat", "LAT", "Lat", "latitude"]
     ) or next((c for c in df.columns if "lat" in c.lower()), None)
 
     lon_col = _find_col(
-        df, ["MMS-Met_LON", "MMS-Met_Lon",
+        df, ["Lon_deg", "MMS-Met_LON", "MMS-Met_Lon",
              "MMS-MetData_LON", "MMS-MetData_Lon", "LON", "Lon", "longitude"]
     ) or next((c for c in df.columns if "lon" in c.lower()), None)
 
     alt_col = _find_col(
-        df, ["MMS-Met_ALT", "MMS-Met_Alt",
+        df, ["Alt_m", "MMS-Met_ALT", "MMS-Met_Alt",
              "MMS-MetData_ALT", "MMS-MetData_Alt", "ALT", "Alt", "ALTITUDE"]
     ) or next((c for c in df.columns if "alt" in c.lower()), None)
 
@@ -637,13 +722,42 @@ def extract_macpex_standard(df: pd.DataFrame) -> pd.DataFrame:
     else:
         source = pd.Series("", index=df.index)
 
+    # qv per instrument from ppmv columns (all three instruments output ppmv)
+    hwv_col = _find_col(df, WV_SOURCE_COLS["HWV"])
+    dlh_col = _find_col(df, WV_SOURCE_COLS["DLH"])
+    jlh_col = _find_col(df, WV_SOURCE_COLS["JLH"])
+
+    qv_hwv = qv_from_ppmv(df[hwv_col]) if hwv_col else np.nan
+    qv_dlh = qv_from_ppmv(df[dlh_col]) if dlh_col else np.nan
+    qv_jlh = qv_from_ppmv(df[jlh_col]) if jlh_col else np.nan
+
+    # qv = best from ranking order (HWV → DLH → JLH, matching H2O_RANK_TO_WV)
+    qv = pd.Series(np.nan, index=df.index, dtype=float)
+    for src_arr in (qv_hwv, qv_dlh, qv_jlh):
+        arr = src_arr if isinstance(src_arr, pd.Series) else pd.Series(src_arr, index=df.index)
+        mask = qv.isna() & arr.notna()
+        qv = qv.where(~mask, arr)
+
+    # Sw from Si and T_C
+    sw = sw_from_si(df.get("Si", np.nan), df.get("T_C", np.nan))
+
     return pd.DataFrame({
-        "Timestamp": df.get("Timestamp", pd.NaT),
-        "Tair_C":    df.get("T_C", np.nan),
-        "Si":        df.get("Si", np.nan),
-        "Lat":       df[lat_col] if lat_col else np.nan,
-        "Lon":       df[lon_col] if lon_col else np.nan,
-        "Alt_m":     df[alt_col] if alt_col else np.nan,
-        "Campaign":  df.get("Campaign", "MACPEX"),
+        "Timestamp":  df.get("Timestamp", pd.NaT),
+        "Tair_C":     df.get("T_C", np.nan),
+        "P_hPa":      df.get("P_hPa", np.nan),
+        "Si":         df.get("Si", np.nan),
+        "Si_HWV":     df.get("Si_HWV", np.nan),
+        "Si_DLH":     df.get("Si_DLH", np.nan),
+        "Si_JLH":     df.get("Si_JLH", np.nan),
+        "Si_FISH":    df.get("Si_FISH", np.nan),
+        "qv":         qv,
+        "qv_hwv":     qv_hwv,
+        "qv_dlh":     qv_dlh,
+        "qv_jlh":     qv_jlh,
+        "Sw":         sw,
+        "Lat":        df[lat_col] if lat_col else np.nan,
+        "Lon":        df[lon_col] if lon_col else np.nan,
+        "Alt_m":      df[alt_col] if alt_col else np.nan,
+        "Campaign":   df.get("Campaign", "MACPEX"),
         "source_file": source,
     })

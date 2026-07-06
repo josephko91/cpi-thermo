@@ -47,6 +47,8 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
+from .utils import qv_from_ppmv, sw_from_si
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -63,6 +65,14 @@ _MISSING_FLAGS: list[float] = [
     -9999.0, -9999.99,
     -8888.0, -8888.88,
     -7777.0, -7777.77,
+    # MMS-1HZ per-variable fill codes (documented in its ICARTT header):
+    # P/U/V/W/PALT use -99999, REYN uses -999, LAT uses -9999999,
+    # LONG uses -99999999. Previously unmasked, e.g. -99999 x COEF_PRESSURE
+    # (0.01) silently produced P_hPa = -999.99 instead of NaN.
+    -99999.0,
+    -999.0,
+    -9999999.0,
+    -99999999.0,
 ]
 
 # Time column per instrument directory
@@ -145,7 +155,7 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
     df["datetime_utc"] = flight_date + pd.to_timedelta(
         df[time_col].astype(float), unit="s"
     )
-    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").astype("datetime64[ns, UTC]")
+    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").dt.as_unit("ns")
 
     # --- Prefix data columns with instrument stem ---
     file_prefix = filepath.stem.split("_")[0]
@@ -189,7 +199,7 @@ def _combine_ict_files(
     for prefix, df_list in instrument_dfs.items():
         merged_instruments[prefix] = (
             pd.concat(df_list, ignore_index=True)
-            .assign(datetime_utc=lambda frame: pd.to_datetime(frame["datetime_utc"], utc=True, errors="coerce").astype("datetime64[ns, UTC]"))
+            .assign(datetime_utc=lambda frame: pd.to_datetime(frame["datetime_utc"], utc=True, errors="coerce").dt.as_unit("ns"))
             .sort_values("datetime_utc")
             .reset_index(drop=True)
         )
@@ -283,8 +293,9 @@ def load_posidon(
         e = (ppmv / 1e6) * P
         si.loc[valid] = (e / e_s) - 1
 
-    # Clip to physically meaningful range
-    combined["Si"] = si.clip(-1.0, 1.0)
+    # Clip to physically meaningful range — DLH primary instrument
+    combined["Si_DLH"] = si.clip(-1.0, 1.0)
+    combined["Si"] = combined["Si_DLH"]
 
     return combined
 
@@ -313,10 +324,22 @@ def extract_posidon_standard(
     out["Tair_C"] = out["Tair_K"] - 273.15 if "T_K" in df.columns else np.nan
 
     # Pressure
-    out["Pressure_hPa"] = df.get("P_hPa", np.nan)
+    out["P_hPa"] = df.get("P_hPa", np.nan)
 
     # Supersaturation
     out["Si"] = df.get("Si", np.nan)
+    out["Si_DLH"] = df.get("Si_DLH", np.nan)
+
+    # qv_dlh from DLH ppmv (no pressure needed)
+    dlh_col = "DLH-H2O_H2O_ppmv"
+    if dlh_col in df.columns:
+        out["qv_dlh"] = qv_from_ppmv(df[dlh_col])
+    else:
+        out["qv_dlh"] = np.nan
+    out["qv"] = out["qv_dlh"]
+
+    # Sw from Si and T
+    out["Sw"] = sw_from_si(out["Si"], out["Tair_C"])
 
     # Position
     out["Lat"]   = df.get("MMS-1HZ_G_LAT",  np.nan) * COEF_LAT
