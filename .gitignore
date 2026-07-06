@@ -4,9 +4,11 @@ __pycache__/
 *$py.class
 data/
 scripts/tests/output/
-logs/
+logs/*
+!logs/README.md
 *.DS_Store
-figs/
+figs/*
+!figs/README.md
 
 # C extensions
 *.so
