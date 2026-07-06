@@ -45,8 +45,8 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 DATA_DIR  = REPO_ROOT / "data/raw/IPHEX"
-DIAG_DIR  = REPO_ROOT / "logs/diagnostics"
-FIGS_DIR  = REPO_ROOT / "figs/iphex"
+DIAG_DIR  = REPO_ROOT / "logs/campaign_tests/iphex"
+FIGS_DIR  = REPO_ROOT / "figs/campaign_tests/iphex"
 
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -268,7 +268,7 @@ def test_si_values_plausible():
 # ---------------------------------------------------------------------------
 
 def test_write_diagnostics():
-    """Write per-flight and overall diagnostics to logs/diagnostics/."""
+    """Write per-flight and overall diagnostics to logs/campaign_tests/iphex/."""
     df = _load_all()
 
     diag: dict = {
@@ -353,7 +353,7 @@ def test_write_diagnostics():
 
 def test_generate_figures():
     """
-    Generate IPHEX water vapor diagnostic figures to figs/iphex/.
+    Generate IPHEX water vapor diagnostic figures to figs/campaign_tests/iphex/.
 
       01 — Instrument coverage bar chart (valid rows per flight, per source)
       02 — Si distributions: chilled mirror vs TDL vs DEWPT

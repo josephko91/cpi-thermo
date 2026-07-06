@@ -5,11 +5,12 @@ CPI Data Fusion Diagnostic
 Tests the combined environmental data from main.py against CPI imagery timestamps.
 Measures how much of the CPI image archive has concurrent Tair_C and Si measurements.
 
-Outputs:
-  logs/diagnostics/cpi_fusion_summary.csv   - per-campaign coverage table
-  logs/diagnostics/cpi_fusion_report.txt    - text summary + bug notes
-  figs/cpi_fusion_coverage.png              - bar chart of coverage rates
-  figs/cpi_fusion_si_tair_scatter.png       - Si vs Tair_C colored by campaign
+Outputs (logs/cpi_fusion/<timestamp>/ and figs/cpi_fusion/<timestamp>/, with a
+`latest` symlink in each kept pointing at the newest run):
+  cpi_fusion_summary.csv         - per-campaign coverage table
+  cpi_fusion_report.txt          - text summary + bug notes
+  cpi_fusion_coverage.png        - bar chart of coverage rates
+  cpi_fusion_si_tair_scatter.png - Si vs Tair_C colored by campaign
 
 Usage:
     python scripts/diagnose_cpi_fusion.py
@@ -40,14 +41,16 @@ from parsers.cpi_timestamps import (
     CPI_TO_ENV_CAMPAIGN as CPI_TO_ENV,
     load_cpi_embeddings_timestamps,
 )
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 CPI_CSV       = ROOT / "data" / "raw" / "cpi_embeddings_timestamps.csv"
 DEFAULT_ENV   = ROOT / "data" / "out" / "combined_env_data.parquet"
-DIAG_DIR      = ROOT / "logs" / "diagnostics"
-FIGS_DIR      = ROOT / "figs"
+RUN_TS        = _run_timestamp()
+DIAG_DIR      = ROOT / "logs" / "cpi_fusion" / RUN_TS
+FIGS_DIR      = ROOT / "figs" / "cpi_fusion" / RUN_TS
 
 MATCH_TOLERANCE_S = 1   # seconds; CPI timestamps are whole-second
 
@@ -427,6 +430,10 @@ def main() -> None:
     report = write_report(summary, env, DIAG_DIR / "cpi_fusion_report.txt")
     print()
     print(report)
+
+    update_latest(DIAG_DIR.parent, DIAG_DIR)
+    update_latest(FIGS_DIR.parent, FIGS_DIR)
+    print(f"\nLatest run: {DIAG_DIR.parent / 'latest'} -> {DIAG_DIR.name}")
 
 
 if __name__ == "__main__":

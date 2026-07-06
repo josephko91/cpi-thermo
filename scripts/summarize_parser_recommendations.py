@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Summarize and prioritize parser recommendations from diagnostics CSV output.
 
-Reads campaign_parser_recommendations.csv and campaign_variable_detail.csv,
-then prints a ranked parser-fix backlog to help guide extractor updates.
+Reads campaign_parser_recommendations.csv and campaign_variable_detail.csv
+(by default from logs/campaign_missingness/latest, i.e. the most recent
+diagnose_campaign_missingness.py run), then prints a ranked parser-fix
+backlog to help guide extractor updates.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ from pathlib import Path
 
 import pandas as pd
 from pandas.errors import EmptyDataError
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 GAP_WEIGHT = {
@@ -34,8 +38,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("logs/diagnostics"),
-        help="Directory containing diagnostics CSV outputs",
+        default=ROOT / "logs" / "campaign_missingness" / "latest",
+        help="Directory containing diagnostics CSV outputs (default: "
+             "logs/campaign_missingness/latest, i.e. the most recent "
+             "diagnose_campaign_missingness.py run)",
     )
     parser.add_argument(
         "--top",

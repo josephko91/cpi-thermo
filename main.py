@@ -25,6 +25,7 @@ import logging
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
 from parsers import CAMPAIGN_LOADERS
 from parsers.arm import extract_arm_standard
 from parsers.crystal_face_nasa import extract_crystal_face_nasa_standard
@@ -611,6 +612,7 @@ def print_summary(df: pd.DataFrame, output_path: Optional[Path] = None,
 def parse_args():
     """Parse command line arguments."""
     root = Path(__file__).parent
+    ts = _run_timestamp()
     parser = argparse.ArgumentParser(
         description="Process field campaign environmental data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -659,22 +661,24 @@ Examples:
     parser.add_argument(
         "--log-file",
         type=Path,
-        default=root / "logs" / "output.log",
-        help="Path to log file",
+        default=root / "logs" / "pipeline" / ts / "output.log",
+        help="Path to log file (default: logs/pipeline/<timestamp>/output.log, "
+             "with logs/pipeline/latest kept pointing at the newest run)",
     )
 
     parser.add_argument(
         "--diag-dir",
         type=Path,
-        default=root / "logs" / "diagnostics",
-        help="Directory for diagnostic CSV outputs",
+        default=root / "logs" / "pipeline" / ts,
+        help="Directory for diagnostic CSV outputs (default: logs/pipeline/<timestamp>/)",
     )
 
     parser.add_argument(
         "--figs-dir",
         type=Path,
-        default=root / "figs" / "all-campaigns",
-        help="Directory for figure outputs",
+        default=root / "figs" / "all-campaigns" / ts,
+        help="Directory for figure outputs (default: figs/all-campaigns/<timestamp>/, "
+             "with figs/all-campaigns/latest kept pointing at the newest run)",
     )
 
     parser.add_argument(
@@ -740,6 +744,7 @@ def main():
         # Diagnostics CSVs
         if not args.dry_run:
             generate_diagnostics(df, args.diag_dir)
+            update_latest(args.diag_dir.parent, args.diag_dir)
 
         # Figures — run plot_all_campaigns.py as subprocess so it can find the saved parquet
         if not args.dry_run and not args.no_plots:
@@ -759,6 +764,7 @@ def main():
                     logging.warning(f"plot_all_campaigns.py exited with code {result.returncode}")
                     if result.stderr:
                         logging.warning(result.stderr.strip())
+                # plot_all_campaigns.py updates figs/all-campaigns/latest itself.
             else:
                 logging.warning(f"Plot script not found: {plot_script}")
 

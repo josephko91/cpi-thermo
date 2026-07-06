@@ -33,8 +33,8 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 DATA_DIR = REPO_ROOT / "data/raw/ICE-L/nav-state-microphysics"
-DIAG_DIR = REPO_ROOT / "logs/diagnostics"
-FIGS_DIR = REPO_ROOT / "figs/ice_l"
+DIAG_DIR = REPO_ROOT / "logs/campaign_tests/ice_l"
+FIGS_DIR = REPO_ROOT / "figs/campaign_tests/ice_l"
 
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -207,7 +207,7 @@ def test_ratio_is_all_nan():
 # ---------------------------------------------------------------------------
 
 def test_write_diagnostics():
-    """Write per-flight and overall TDL diagnostics to logs/diagnostics/."""
+    """Write per-flight and overall TDL diagnostics to logs/campaign_tests/ice_l/."""
     df = _load_all_flights()
 
     diag: dict = {

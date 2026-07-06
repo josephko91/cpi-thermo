@@ -15,10 +15,11 @@ column schema; `main.py` runs all parsers and writes `data/out/combined_env_data
 | `config.yaml` | Per-campaign settings (h2o_ranking, file paths) |
 | `parsers/<campaign>.py` | One parser per campaign; each has `load_*()` + `extract_*_standard()` |
 | `parsers/utils.py` | Thermodynamic utilities: `es_ice_hPa`, `es_liq_hPa`, `qv_from_e_P`, `si_from_frost_point` |
-| `scripts/qa_checks.py` | 9 QC check functions; writes CSVs to `logs/qaqc_<YYYYMMDD>/` |
+| `scripts/qa_checks.py` | 9 QC check functions; writes CSVs to `logs/qaqc/<timestamp>/` |
 | `data/out/combined_env_data.parquet` | Main output (gitignored) |
 | `parsers/cpi_timestamps.py` | Canonical loader for `data/raw/cpi_embeddings_timestamps.csv` (CPI particle-image timestamps); normalizes campaign names and known UTC-offset bugs (e.g. MC3E) |
-| `scripts/diagnose_cpi_fusion.py` | Cross-references CPI image timestamps against `combined_env_data.parquet`; writes `logs/diagnostics/cpi_fusion_report.txt` |
+| `scripts/diagnose_cpi_fusion.py` | Cross-references CPI image timestamps against `combined_env_data.parquet`; writes `logs/cpi_fusion/<timestamp>/cpi_fusion_report.txt` |
+| `scripts/log_paths.py` | Shared helper: every diagnostic script writes to `<logs\|figs>/<script>/<timestamp>/` and refreshes a `latest` symlink — see "Logs & figs layout" below |
 
 ## Standard output schema
 
@@ -84,9 +85,29 @@ session-by-session summaries. Key items:
 ## Running the pipeline
 
 ```bash
-python main.py                          # rebuild parquet
-python scripts/qa_checks.py \
-  --env data/out/combined_env_data.parquet \
-  --out logs/qaqc_$(date +%Y%m%d)      # run all 9 QC checks
+python main.py                          # rebuild parquet + diagnostics + figures
+python scripts/qa_checks.py             # run all 9 QC checks
 python scripts/diagnose_cpi_fusion.py   # cross-check CPI images vs env data
 ```
+
+## Logs & figs layout
+
+Every diagnostic entry point writes to its own `logs/<script>/<YYYYMMDD_HHMMSS>/`
+and/or `figs/<script>/<YYYYMMDD_HHMMSS>/` directory (never overwriting a prior
+run) and refreshes a `<script>/latest` symlink, via the shared helper in
+`scripts/log_paths.py`:
+
+| Script | Logs | Figs |
+|--------|------|------|
+| `main.py` | `logs/pipeline/<ts>/` (output.log + campaign/Si/qv coverage CSVs) | `figs/all-campaigns/<ts>/` (via `plot_all_campaigns.py`) |
+| `scripts/qa_checks.py` | `logs/qaqc/<ts>/` (00–09 CSVs) | `figs/qaqc/<ts>/` |
+| `scripts/diagnose_cpi_fusion.py` | `logs/cpi_fusion/<ts>/` | `figs/cpi_fusion/<ts>/` |
+| `scripts/diagnose_campaign_missingness.py` | `logs/campaign_missingness/<ts>/` | — |
+| `scripts/summarize_parser_recommendations.py` | reads `logs/campaign_missingness/latest/` by default | — |
+| `scripts/full_diagnostic.py` | — | `figs/full_diagnostic/<ts>/` |
+| `scripts/tests/test_{attrex,ice_l,iphex}.py` | `logs/campaign_tests/<campaign>/` (stable, overwritten each run — not a "pipeline" run) | `figs/campaign_tests/<campaign>/` |
+
+Pre-reorg content (from before 2026-07-06) was preserved under `logs/archive/`
+and `figs/archive/`, and old date-only snapshots (`qaqc_20260630/`, etc.) were
+migrated into the `<script>/<ts>/` layout above. `logs/` and `figs/` are both
+gitignored in full, so none of this is version-controlled.

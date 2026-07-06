@@ -23,8 +23,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 DATA_DIR = REPO_ROOT / "data/raw/ATTREX"
 CPI_CSV = REPO_ROOT / "data/raw/cpi_embeddings_timestamps.csv"
-DIAG_DIR = REPO_ROOT / "logs/diagnostics"
-FIGS_DIR = REPO_ROOT / "figs/attrex"
+DIAG_DIR = REPO_ROOT / "logs/campaign_tests/attrex"
+FIGS_DIR = REPO_ROOT / "figs/campaign_tests/attrex"
 
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -213,7 +213,7 @@ def test_cpi_overlap():
 # ---------------------------------------------------------------------------
 
 def test_write_diagnostics():
-    """Write structured diagnostic summary to logs/diagnostics/attrex_diagnostics.json."""
+    """Write structured diagnostic summary to logs/campaign_tests/attrex/attrex_diagnostics.json."""
     df = _load_attrex_cached()
 
     diag: dict = {
@@ -304,7 +304,7 @@ def test_write_diagnostics():
 # ---------------------------------------------------------------------------
 
 def test_generate_figures():
-    """Generate and save diagnostic figures to figs/attrex/."""
+    """Generate and save diagnostic figures to figs/campaign_tests/attrex/."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

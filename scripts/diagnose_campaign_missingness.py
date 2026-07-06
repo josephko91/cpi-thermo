@@ -8,17 +8,20 @@ This script audits campaign data in three stages:
 
 It writes CSV artifacts to help identify where NaNs originate and where parser
 mappings likely need updates before combining into the final parquet output.
+Outputs go to logs/campaign_missingness/<timestamp>/, with a `latest` symlink
+kept pointing at the newest run.
 
 Usage examples:
     python scripts/diagnose_campaign_missingness.py
     python scripts/diagnose_campaign_missingness.py --campaigns ATTREX MACPEX
-    python scripts/diagnose_campaign_missingness.py --output-dir logs/diagnostics
+    python scripts/diagnose_campaign_missingness.py --output-dir /tmp/custom_dir
 """
 
 from __future__ import annotations
 
 import argparse
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -27,8 +30,12 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 from main import DEFAULT_CAMPAIGN_CONFIG
 from parsers import CAMPAIGN_LOADERS
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 
 TARGET_VARS: List[str] = [
@@ -452,8 +459,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("logs/diagnostics"),
-        help="Directory for diagnostics CSV artifacts",
+        default=ROOT / "logs" / "campaign_missingness" / _run_timestamp(),
+        help="Directory for diagnostics CSV artifacts (default: "
+             "logs/campaign_missingness/<timestamp>/, with "
+             "logs/campaign_missingness/latest kept pointing at the newest run)",
     )
     parser.add_argument(
         "--max-raw-rows",
@@ -475,6 +484,9 @@ def main() -> None:
     print("Diagnostics complete. Generated files:")
     for key, path in out_paths.items():
         print(f"- {key}: {path}")
+
+    update_latest(args.output_dir.parent, args.output_dir)
+    print(f"\nLatest run: {args.output_dir.parent / 'latest'} -> {args.output_dir.name}")
 
 
 if __name__ == "__main__":

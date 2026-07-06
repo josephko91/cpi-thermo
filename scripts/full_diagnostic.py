@@ -2,10 +2,13 @@
 Full diagnostic of combined_env_data.parquet.
 Outputs:
   - Console: per-variable stats + per-campaign availability table
-  - figs/all-campaigns_<YYYYMMDD>/  — one PNG per variable with per-campaign distributions
+  - figs/full_diagnostic/<timestamp>/  — one PNG per variable with per-campaign
+    distributions (figs/full_diagnostic/latest symlink kept pointing at the
+    newest run)
 """
 
 import argparse
+import sys
 import textwrap
 from pathlib import Path
 from datetime import date
@@ -17,11 +20,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-PARQUET = Path("data/out/combined_env_data.parquet")
-FIGDIR  = Path(f"figs/all-campaigns_{date.today().strftime('%Y%m%d')}")
+PARQUET = ROOT / "data" / "out" / "combined_env_data.parquet"
+FIGDIR  = ROOT / "figs" / "full_diagnostic" / _run_timestamp()
 
 VARIABLES = {
     "Tair_C":  dict(label="Air Temperature (°C)",        xlim=(-90, 40),   bins=65),
@@ -395,6 +402,7 @@ def main():
     print("\n  [5/5] Si vs Tair per campaign …")
     plot_si_vs_tair(df, FIGDIR)
 
+    update_latest(FIGDIR.parent, FIGDIR)
     print(f"\n{'='*70}")
     print(f"  Done. Figures in {FIGDIR}/")
     print(f"{'='*70}\n")

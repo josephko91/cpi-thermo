@@ -2,7 +2,8 @@
 """
 Diagnostic plots for all campaigns.
 
-Outputs (in figs/all-campaigns/):
+Outputs (default: figs/all-campaigns/<timestamp>/, with a `latest` symlink
+kept pointing at the newest run):
   01_si_distributions.png        — Si KDE per campaign, faceted grid
   02_tair_distributions.png      — Tair_C KDE per campaign, faceted grid
   03_si_vs_tair_hexbin.png       — 2-D hexbin Si vs Tair_C per campaign, faceted grid
@@ -12,14 +13,16 @@ Outputs (in figs/all-campaigns/):
 
 Usage (standalone):
   python scripts/plot_all_campaigns.py
-  python scripts/plot_all_campaigns.py --env data/out/combined_env_data.parquet --out figs/all-campaigns
+  python scripts/plot_all_campaigns.py --env data/out/combined_env_data.parquet --out figs/all-campaigns/custom
 
-Called automatically by main.py after processing.
+Called automatically by main.py after processing (main.py passes an explicit
+--out, so its own figs/all-campaigns/latest symlink stays authoritative).
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -29,6 +32,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.ticker as mticker
 from matplotlib.colors import BoundaryNorm
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 
 def _kde(data, x):
@@ -43,16 +50,14 @@ def _kde(data, x):
 # CLI
 # ---------------------------------------------------------------------------
 def _parse_args():
-    ROOT = Path(__file__).resolve().parents[1]
     p = argparse.ArgumentParser()
     p.add_argument("--env", type=Path,
                    default=ROOT / "data" / "out" / "combined_env_data.parquet")
     p.add_argument("--out", type=Path,
-                   default=ROOT / "figs" / "all-campaigns")
+                   default=ROOT / "figs" / "all-campaigns" / _run_timestamp())
     return p.parse_args()
 
 _args = _parse_args()
-ROOT     = Path(__file__).resolve().parents[1]
 ENV_PATH = _args.env
 OUT_DIR  = _args.out
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -829,4 +834,5 @@ else:
     print("  Skipped (no qv instrument columns present in dataset)")
 
 
+update_latest(OUT_DIR.parent, OUT_DIR)
 print("\nDone. All plots saved to", OUT_DIR)

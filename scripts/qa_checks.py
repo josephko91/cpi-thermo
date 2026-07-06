@@ -4,8 +4,8 @@ QA/QC diagnostic checks for the combined campaign dataset.
 
 Each check is a self-contained function that:
   - Reads the combined parquet
-  - Writes CSV reports to --out  (logs/qaqc_<date>/)
-  - Writes plots to   --figs (figs/qaqc_<date>/)
+  - Writes CSV reports to --out  (logs/qaqc/<timestamp>/, logs/qaqc/latest symlink)
+  - Writes plots to   --figs (figs/qaqc/<timestamp>/, figs/qaqc/latest symlink)
   - Returns a summary dict (check_id, n_flags, pct_flagged, n_campaigns_affected)
 
 Usage:
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
 from pathlib import Path
 
 import matplotlib
@@ -36,6 +35,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from parsers.utils import es_liq_hPa, es_ice_hPa  # noqa: E402
+from scripts.log_paths import timestamp as _run_timestamp, update_latest  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Shared constants (mirrors plot_all_campaigns.py)
@@ -91,17 +91,19 @@ QV_BOUNDS: tuple[float, float] = (0.0, 100.0)
 # ---------------------------------------------------------------------------
 
 def _parse_args() -> argparse.Namespace:
-    today = date.today().strftime("%Y%m%d")
+    ts = _run_timestamp()
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--env", type=Path,
                    default=ROOT / "data" / "out" / "combined_env_data.parquet",
                    help="Path to combined parquet file")
     p.add_argument("--out", type=Path,
-                   default=ROOT / "logs" / f"qaqc_{today}",
-                   help="Directory for CSV diagnostic outputs")
+                   default=ROOT / "logs" / "qaqc" / ts,
+                   help="Directory for CSV diagnostic outputs "
+                        "(default: logs/qaqc/<timestamp>/, with logs/qaqc/latest "
+                        "kept pointing at the newest run)")
     p.add_argument("--figs", type=Path,
-                   default=ROOT / "figs" / f"qaqc_{today}",
+                   default=ROOT / "figs" / "qaqc" / ts,
                    help="Directory for plot outputs")
     p.add_argument("--checks", nargs="+", type=int,
                    default=list(range(1, 10)),
@@ -1605,6 +1607,10 @@ def main() -> None:
 
     if results:
         write_summary(results, args.out)
+
+    update_latest(args.out.parent, args.out)
+    update_latest(args.figs.parent, args.figs)
+    print(f"\nLatest run: {args.out.parent / 'latest'} -> {args.out.name}")
 
 
 if __name__ == "__main__":
