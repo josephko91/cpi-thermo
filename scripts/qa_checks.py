@@ -321,9 +321,15 @@ def check_02_internal_consistency(
 
     # Campaigns that fly primarily through cloud / precipitation — mild
     # exceedances are physically expected for these.
+    # AIRS-II (Alliance Icing Research Study II) uses the same chilled-mirror
+    # dew-point instrument as ARM/IPHEX/etc. and by design samples in-cloud
+    # icing conditions -- it was missing from this set (2026-07-06 audit:
+    # 399 rows misclassified as "severe"/unexplained that are the same
+    # expected in-cloud chilled-mirror behavior documented for the other
+    # campaigns here).
     IN_CLOUD_CAMPAIGNS = {
         "ARM", "IPHEX", "MC3E", "OLYMPEX", "ICE-L",
-        "CRYSTAL-FACE-UND", "CRYSTAL-FACE-NASA",
+        "CRYSTAL-FACE-UND", "CRYSTAL-FACE-NASA", "AIRS-II",
     }
 
     has_vars = work[["Tair_C", "P_hPa", "qv"]].notna().all(axis=1)
