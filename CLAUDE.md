@@ -2,7 +2,7 @@
 
 ## What this project does
 
-Combines atmospheric aircraft campaign data (14 campaigns, ~3.6M records) into a single
+Combines atmospheric aircraft campaign data (14 campaigns, ~3.66M records) into a single
 parquet for thermodynamic analysis — primarily ice supersaturation (Si), water vapor (qv),
 and temperature vs altitude. Parsers normalize each campaign's raw format to a standard
 column schema; `main.py` runs all parsers and writes `data/out/combined_env_data.parquet`.
@@ -15,8 +15,10 @@ column schema; `main.py` runs all parsers and writes `data/out/combined_env_data
 | `config.yaml` | Per-campaign settings (h2o_ranking, file paths) |
 | `parsers/<campaign>.py` | One parser per campaign; each has `load_*()` + `extract_*_standard()` |
 | `parsers/utils.py` | Thermodynamic utilities: `es_ice_hPa`, `es_liq_hPa`, `qv_from_e_P`, `si_from_frost_point` |
-| `scripts/qa_checks.py` | 8 QC check functions; writes CSVs to `logs/qaqc_<YYYYMMDD>/` |
+| `scripts/qa_checks.py` | 9 QC check functions; writes CSVs to `logs/qaqc_<YYYYMMDD>/` |
 | `data/out/combined_env_data.parquet` | Main output (gitignored) |
+| `parsers/cpi_timestamps.py` | Canonical loader for `data/raw/cpi_embeddings_timestamps.csv` (CPI particle-image timestamps); normalizes campaign names and known UTC-offset bugs (e.g. MC3E) |
+| `scripts/diagnose_cpi_fusion.py` | Cross-references CPI image timestamps against `combined_env_data.parquet`; writes `logs/diagnostics/cpi_fusion_report.txt` |
 
 ## Standard output schema
 
@@ -42,20 +44,38 @@ ISDAC, MACPEX, MC3E, MIDCIX, OLYMPEX, POSIDON
 
 ## Known issues / active investigations
 
-See `docs/decisions/` for per-investigation records. Key items:
+See `docs/decisions/` for per-investigation records and `docs/sessions/` for
+session-by-session summaries. Key items:
 
 - **ARM qv NaN**: 63.6% NaN (real data sparsity in dry upper troposphere, not parser bug)
+- **ARM 2000-03-13 CPI timestamp anomaly**: CPI has images at 00:00-01:xx UTC with no
+  corresponding env data that date (env only covers 18:07-22:29). Investigated —
+  raw archive is complete (12 files = campaign's official "12 IOP flights" exactly;
+  filename encoding matches every file's actual data to the minute). Most likely a
+  CPI-side ground-test/calibration session or clock fault, not a missing raw file.
+  See `docs/decisions/2026-07-05-arm-cpi-timestamp-investigation.md`.
 - **IPHEX/OLYMPEX cold-regime Si flags** (1,391 / 45 rows, IPHEX 2014-06-13 + 2014-05-19
   flights and OLYMPEX 15_39_28 flight): chilled-mirror hysteresis at extreme cold can
   amplify small errors into large fractional Si swings, but Si up to ~1.5-1.7 is also
   physically documented for real cirrus near the homogeneous-freezing threshold — kept
   in the data, flagged via `cold_regime_amplification_candidate` in QC9's
   `09_lwc_crossval.csv`. Needs an independent cross-check (e.g. Ophir TDL) to resolve.
+- **MIDCIX Alt_m** at 96.7%, not 100%: navigation (`FP`) files cover 2 more flight
+  dates than the water-vapor (JW) files that `load_midcix()` keys rows off of.
+- **MPACE**: ~36k CPI images exist but no env parser at all (no water-vapor instrument
+  deployed on that platform) — would need a from-scratch parser.
+- **CPI/env fusion**: 89.1% of 3.2M CPI images have a matched thermo timestamp (±1s);
+  57.7% have both Tair_C and Si. Run `python scripts/diagnose_cpi_fusion.py` for the
+  full per-campaign breakdown.
 - Resolved 2026-07-05: ESCAPE P_hPa<50 residual, ESCAPE 2022-06-10 sensor-failure mask
   gap, IPHEX/OLYMPEX qv/Si bound asymmetry, POSIDON P_hPa sentinel bug, OLYMPEX
-  19_51_41-flight chilled-mirror fault masking, and Alt_m recovery for CRYSTAL-FACE-NASA,
-  CRYSTAL-FACE-UND, MACPEX, and MIDCIX (79.2% → 98.2% overall Alt_m coverage) — see
-  `docs/decisions/2026-07-05-open-issues-resolved.md`.
+  19_51_41-flight chilled-mirror fault masking, Alt_m recovery for CRYSTAL-FACE-NASA,
+  CRYSTAL-FACE-UND, MACPEX, and MIDCIX (79.2% → 98.2% overall Alt_m coverage), an
+  MC3E CPI timestamp timezone mislabeling, CRYSTAL-FACE-NASA's ALIAS Si fallback, and
+  CRYSTAL-FACE-UND's missing 2002-07-11 flight segment — see
+  `docs/decisions/2026-07-05-open-issues-resolved.md`,
+  `docs/decisions/2026-07-05-qc9-iphex-olympex.md`, and
+  `docs/decisions/2026-07-05-cpi-fusion-gap-fixes.md`.
 
 ## Running the pipeline
 
@@ -63,5 +83,6 @@ See `docs/decisions/` for per-investigation records. Key items:
 python main.py                          # rebuild parquet
 python scripts/qa_checks.py \
   --env data/out/combined_env_data.parquet \
-  --out logs/qaqc_$(date +%Y%m%d)      # run all 8 QC checks
+  --out logs/qaqc_$(date +%Y%m%d)      # run all 9 QC checks
+python scripts/diagnose_cpi_fusion.py   # cross-check CPI images vs env data
 ```
