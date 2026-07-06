@@ -65,6 +65,14 @@ _MISSING_FLAGS: list[float] = [
     -9999.0, -9999.99,
     -8888.0, -8888.88,
     -7777.0, -7777.77,
+    # MMS-1HZ per-variable fill codes (documented in its ICARTT header):
+    # P/U/V/W/PALT use -99999, REYN uses -999, LAT uses -9999999,
+    # LONG uses -99999999. Previously unmasked, e.g. -99999 x COEF_PRESSURE
+    # (0.01) silently produced P_hPa = -999.99 instead of NaN.
+    -99999.0,
+    -999.0,
+    -9999999.0,
+    -99999999.0,
 ]
 
 # Time column per instrument directory

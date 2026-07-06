@@ -45,11 +45,15 @@ ISDAC, MACPEX, MC3E, MIDCIX, OLYMPEX, POSIDON
 See `docs/decisions/` for per-investigation records. Key items:
 
 - **ARM qv NaN**: 63.6% NaN (real data sparsity in dry upper troposphere, not parser bug)
-- **IPHEX/OLYMPEX severe Si>1.05 flags** (1,391 / 128 rows): QC9 LWC cross-check
-  (`scripts/qa_checks.py`) shows only ~2% have elevated LWC — most look like genuine
-  sensor errors, not rain/cloud contamination as originally assumed. Not yet masked.
+- **IPHEX/OLYMPEX cold-regime Si flags** (1,391 / 45 rows, IPHEX 2014-06-13 + 2014-05-19
+  flights and OLYMPEX 15_39_28 flight): chilled-mirror hysteresis at extreme cold can
+  amplify small errors into large fractional Si swings, but Si up to ~1.5-1.7 is also
+  physically documented for real cirrus near the homogeneous-freezing threshold — kept
+  in the data, flagged via `cold_regime_amplification_candidate` in QC9's
+  `09_lwc_crossval.csv`. Needs an independent cross-check (e.g. Ophir TDL) to resolve.
 - Resolved 2026-07-05: ESCAPE P_hPa<50 residual, ESCAPE 2022-06-10 sensor-failure mask
-  gap, IPHEX/OLYMPEX qv/Si bound asymmetry, and Alt_m recovery for CRYSTAL-FACE-NASA,
+  gap, IPHEX/OLYMPEX qv/Si bound asymmetry, POSIDON P_hPa sentinel bug, OLYMPEX
+  19_51_41-flight chilled-mirror fault masking, and Alt_m recovery for CRYSTAL-FACE-NASA,
   CRYSTAL-FACE-UND, MACPEX, and MIDCIX (79.2% → 98.2% overall Alt_m coverage) — see
   `docs/decisions/2026-07-05-open-issues-resolved.md`.
 

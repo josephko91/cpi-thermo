@@ -87,6 +87,29 @@ def load_olympex_file(filepath: Union[str, Path]) -> pd.DataFrame:
             (df["Si_frost_point"] < -1.0) | (df["Si_frost_point"] > 5.0),
             "Si_frost_point",
         ] = np.nan
+        # Physical implausibility: FrostPoint noticeably above Air_Temp at a
+        # non-cirrus (near-0C or warmer) temperature is a mirror-fault
+        # signature, not real supersaturation -- e.g. flight
+        # 15_12_13_19_51_41 shows FrostPoint 8.9-11.6C above Air_Temp at
+        # Air_Temp = -0.2 to -2.3C (83 rows), which would require >100%
+        # supersaturation w.r.t. liquid water sustained near 0C. Contrast
+        # with flight 15_12_13_15_39_28 (45 rows), which shows a smaller
+        # FrostPoint-Air_Temp gap (6.3-6.7C) at Air_Temp ~-44C -- cold
+        # enough that chilled-mirror hysteresis can plausibly explain the
+        # gap without invoking a fault, so that flight is deliberately left
+        # unmasked here (see docs/decisions/2026-07-05-qc9-iphex-olympex.md).
+        mirror_fault = (
+            df["FrostPoint"].notna() & df["Air_Temp"].notna()
+            & ((df["FrostPoint"] - df["Air_Temp"]) > 5.0) & (df["Air_Temp"] > -10.0)
+        )
+        n_fault = int(mirror_fault.sum())
+        if n_fault > 0:
+            df.loc[mirror_fault, "Si_frost_point"] = np.nan
+            print(
+                f"  OLYMPEX QC: nulled {n_fault:,} rows where FrostPoint exceeded "
+                f"Air_Temp by >5°C at Air_Temp > -10°C (chilled-mirror fault — "
+                f"check source file)"
+            )
         df["Si"] = df["Si_frost_point"]
     
     return df

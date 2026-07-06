@@ -1425,6 +1425,12 @@ SI_SEVERE_THRESHOLD = 1.05
 # conservative floor above typical hot-wire probe noise floor (~0.01-0.02 g/m^3).
 LWC_INCLOUD_THRESHOLD = 0.05
 
+# Below this Tair_C, a sensor-error candidate is treated as a cold-regime
+# chilled-mirror amplification candidate rather than an unambiguous fault --
+# complementary to the mirror-fault mask threshold in parsers/olympex.py
+# (Air_Temp > -10°C there is masked outright as physically implausible).
+COLD_REGIME_THRESHOLD = -10.0
+
 
 def check_09_lwc_crossval(
     df: pd.DataFrame,
@@ -1477,7 +1483,7 @@ def check_09_lwc_crossval(
                 "LWC_gm3": pd.to_numeric(raw[lwc_col], errors="coerce"),
                 "lwc_source": lwc_col,
             })
-            merged = flagged[["Timestamp", "Si"]].merge(raw_small, on="Timestamp", how="left")
+            merged = flagged[["Timestamp", "Si", "Tair_C"]].merge(raw_small, on="Timestamp", how="left")
             merged["Campaign"] = camp
             merged["source_file"] = source_file
             result_rows.append(merged)
@@ -1499,6 +1505,20 @@ def check_09_lwc_crossval(
         "in_cloud_or_precip",
         "sensor_error_candidate",
     )
+    # Among sensor-error candidates, separate cold-regime cases (Tair_C <
+    # COLD_REGIME_THRESHOLD) where chilled-mirror hysteresis is a documented,
+    # physically plausible explanation for an inflated Si -- these are flagged
+    # for visibility only, not masked, since e.g. IPHEX's 2014-06-13 flight
+    # (Tair_C ~ -55°C) may partly reflect real cirrus-regime supersaturation
+    # near the homogeneous-freezing threshold rather than a pure instrument
+    # fault. Unambiguous mirror-fault rows (FrostPoint far above a near-0°C
+    # Air_Temp) are masked directly in parsers/olympex.py instead and won't
+    # appear here as Si>1.05 after rebuild. See
+    # docs/decisions/2026-07-05-qc9-iphex-olympex.md.
+    result_df["cold_regime_amplification_candidate"] = (
+        (result_df["likely_cause"] == "sensor_error_candidate")
+        & (result_df["Tair_C"] < COLD_REGIME_THRESHOLD)
+    )
 
     out_path = out_dir / "09_lwc_crossval.csv"
     result_df.to_csv(out_path, index=False)
@@ -1506,12 +1526,14 @@ def check_09_lwc_crossval(
     n_total = len(result_df)
     n_incloud = int((result_df["likely_cause"] == "in_cloud_or_precip").sum())
     n_sensor = int((result_df["likely_cause"] == "sensor_error_candidate").sum())
+    n_cold = int(result_df["cold_regime_amplification_candidate"].sum())
     n_no_lwc = int(result_df["LWC_gm3"].isna().sum())
     n_camps = result_df["Campaign"].nunique()
 
     print(f"  Saved {out_path}  ({n_total:,} severe Si>1.05 rows cross-checked)")
     print(f"    in-cloud/precip (LWC > {LWC_INCLOUD_THRESHOLD} g/m³): {n_incloud:,}")
     print(f"    sensor-error candidates (LWC ≤ {LWC_INCLOUD_THRESHOLD} g/m³ or missing): {n_sensor:,}")
+    print(f"      of which cold-regime amplification candidates (Tair_C < {COLD_REGIME_THRESHOLD}°C, flagged not masked): {n_cold:,}")
 
     return {
         "check_id": "QC9",
@@ -1522,8 +1544,9 @@ def check_09_lwc_crossval(
         "notes": (
             f"Of {n_total:,} Si>{SI_SEVERE_THRESHOLD} rows (IPHEX/OLYMPEX), {n_incloud:,} "
             f"have LWC>{LWC_INCLOUD_THRESHOLD} g/m³ (plausible in-cloud/precip contamination), "
-            f"{n_sensor:,} have LWC at/near zero or missing (sensor-error candidates); "
-            f"{n_no_lwc:,} rows had no LWC value available in the raw file."
+            f"{n_sensor:,} have LWC at/near zero or missing (sensor-error candidates), of which "
+            f"{n_cold:,} are cold-regime (Tair_C<{COLD_REGIME_THRESHOLD}°C) amplification "
+            f"candidates flagged but not masked; {n_no_lwc:,} rows had no LWC value available."
         ),
     }
 
