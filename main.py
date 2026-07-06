@@ -40,6 +40,7 @@ from parsers.posidon import extract_posidon_standard
 from parsers.escape import extract_escape_standard
 from parsers.ice_l import extract_ice_l_standard
 from parsers.macpex import extract_macpex_standard
+from parsers.mpace import extract_mpace_standard
 
 
 # =============================================================================
@@ -131,6 +132,12 @@ DEFAULT_CAMPAIGN_CONFIG: Dict[str, Dict] = {
         "pattern": "*.ict",
         "loader": "load_macpex",
         "extractor": extract_macpex_standard,
+    },
+    "MPACE": {
+        "path": "./data/raw/MPACE",
+        "pattern": "*.mpace",
+        "loader": "load_mpace",
+        "extractor": extract_mpace_standard,
     },
 }
 

@@ -27,8 +27,6 @@ from typing import Union
 import pandas as pd
 
 #: CPI CSV campaign name -> env pipeline campaign name.
-#: MPACE has no env parser (no water-vapor instrument was deployed on that
-#: platform), so it's mapped to itself for bookkeeping but will never match.
 CPI_TO_ENV_CAMPAIGN: dict[str, str] = {
     "AIRS_II":           "AIRS-II",
     "ARM":               "ARM",
@@ -61,7 +59,7 @@ def load_cpi_embeddings_timestamps(path: Union[str, Path]) -> pd.DataFrame:
     ``datetime`` columns (datetime corrected to true UTC per
     ``CPI_UTC_OFFSET_HOURS``), plus a ``campaign_env`` column mapping each row
     to its corresponding env-pipeline campaign name (per
-    ``CPI_TO_ENV_CAMPAIGN``; NaN for campaigns with no env parser, i.e. MPACE).
+    ``CPI_TO_ENV_CAMPAIGN``).
     """
     df = pd.read_csv(path)
     df["datetime"] = pd.to_datetime(df["datetime"], utc=True, errors="coerce")

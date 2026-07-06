@@ -63,6 +63,12 @@ This folder contains Python modules for parsing and standardizing environmental 
   - [NASA ESPO Archive](https://espoarchive.nasa.gov/archive/browse/macpex)
   - NASA ICARTT files (`*.ict`).
 
+- **MPACE (Mixed-Phase Arctic Cloud Experiment):**
+  - [ARM IOP Data Browser](https://iop.arm.gov/2004/nsa/mpace/poellot-citation)
+  - UND Citation II aircraft, Barrow AK, 2004.
+  - NASA Ames FFI 1001 text files (`*.mpace`). No water-vapor instrument was
+    flown, so Si/qv are NaN for every record; Tair_C/P_hPa/Lat/Lon/Alt_m only.
+
 ## Data Processing and Standardization
 
 Each parser:

@@ -2,7 +2,7 @@
 
 ## What this project does
 
-Combines atmospheric aircraft campaign data (14 campaigns, ~3.66M records) into a single
+Combines atmospheric aircraft campaign data (15 campaigns, ~3.84M records) into a single
 parquet for thermodynamic analysis — primarily ice supersaturation (Si), water vapor (qv),
 and temperature vs altitude. Parsers normalize each campaign's raw format to a standard
 column schema; `main.py` runs all parsers and writes `data/out/combined_env_data.parquet`.
@@ -40,7 +40,7 @@ qv_<instrument>, Sw, Lat, Lon, Alt_m, Campaign, source_file
 ## Campaigns
 
 ARM, AIRS-II, ATTREX, CRYSTAL-FACE-NASA, CRYSTAL-FACE-UND, ESCAPE, IPHEX, ICE-L,
-ISDAC, MACPEX, MC3E, MIDCIX, OLYMPEX, POSIDON
+ISDAC, MACPEX, MC3E, MIDCIX, MPACE, OLYMPEX, POSIDON
 
 ## Known issues / active investigations
 
@@ -62,11 +62,15 @@ session-by-session summaries. Key items:
   `09_lwc_crossval.csv`. Needs an independent cross-check (e.g. Ophir TDL) to resolve.
 - **MIDCIX Alt_m** at 96.7%, not 100%: navigation (`FP`) files cover 2 more flight
   dates than the water-vapor (JW) files that `load_midcix()` keys rows off of.
-- **MPACE**: ~36k CPI images exist but no env parser at all (no water-vapor instrument
-  deployed on that platform) — would need a from-scratch parser.
-- **CPI/env fusion**: 89.1% of 3.2M CPI images have a matched thermo timestamp (±1s);
-  57.7% have both Tair_C and Si. Run `python scripts/diagnose_cpi_fusion.py` for the
-  full per-campaign breakdown.
+- **MPACE**: `parsers/mpace.py` added 2026-07-06, loading the UND Citation NASA Ames
+  files from `data/raw/MPACE` (15 flights, 2004-09-30 to 2004-10-21, Barrow AK).
+  No water-vapor instrument was flown on this platform, so Si/qv are NaN for every
+  record — only Tair_C/P_hPa/Lat/Lon/Alt_m are populated. CPI fusion: 99.9% of
+  ~36k CPI images get a matched timestamp, 76.3% get Tair_C.
+- **CPI/env fusion** (as of 2026-07-06, post-MPACE): 91.3% of 3.2M CPI images have a
+  matched thermo timestamp (±1s, up from 89.1% pre-MPACE); 57.7% have both Tair_C and
+  Si (unchanged — MPACE contributes matches but no Si/qv). Run
+  `python scripts/diagnose_cpi_fusion.py` for the full per-campaign breakdown.
 - Resolved 2026-07-05: ESCAPE P_hPa<50 residual, ESCAPE 2022-06-10 sensor-failure mask
   gap, IPHEX/OLYMPEX qv/Si bound asymmetry, POSIDON P_hPa sentinel bug, OLYMPEX
   19_51_41-flight chilled-mirror fault masking, Alt_m recovery for CRYSTAL-FACE-NASA,

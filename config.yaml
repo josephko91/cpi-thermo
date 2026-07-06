@@ -162,6 +162,16 @@ campaigns:
       Uses ATX (temperature), PSXC (pressure), and RHUM (pre-calculated RH).
       Si is derived from RHUM as Si = RHUM/100 - 1.
 
+  MPACE:
+    path: ./data/raw/MPACE
+    pattern: "*.mpace"
+    description: >
+      MPACE (Mixed-Phase Arctic Cloud Experiment) 2004, UND Citation II,
+      Barrow AK. NASA Ames FFI 1001 text files (.mpace). No water-vapor
+      instrument was flown, so Si/qv are NaN for every record; Tair_C
+      (Air_Temp), P_hPa (STATIC_PR), Lat/Lon/Alt_m (Applanix POS) are
+      populated for CPI image fusion.
+
 # Output settings
 output:
   default_format: parquet
