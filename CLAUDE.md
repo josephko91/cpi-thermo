@@ -20,6 +20,7 @@ column schema; `main.py` runs all parsers and writes `data/out/combined_env_data
 | `parsers/cpi_timestamps.py` | Canonical loader for `data/raw/cpi_embeddings_timestamps.csv` (CPI particle-image timestamps); normalizes campaign names and known UTC-offset bugs (e.g. MC3E) |
 | `scripts/diagnose_cpi_fusion.py` | Cross-references CPI image timestamps against `combined_env_data.parquet`; writes `logs/cpi_fusion/<timestamp>/cpi_fusion_report.txt` |
 | `scripts/log_paths.py` | Shared helper: every diagnostic script writes to `<logs\|figs>/<script>/<timestamp>/` and refreshes a `latest` symlink — see "Logs & figs layout" below |
+| `docs/dataset-changelog.md` | Reverse-chronological log of changes that affect the parquet's rows/columns/coverage (campaigns added, schema changes, coverage-moving bugfixes) |
 
 ## Standard output schema
 
@@ -45,8 +46,13 @@ ISDAC, MACPEX, MC3E, MIDCIX, MPACE, OLYMPEX, POSIDON
 
 ## Known issues / active investigations
 
-See `docs/decisions/` for per-investigation records and `docs/sessions/` for
-session-by-session summaries. Key items:
+See `docs/decisions/` for per-investigation records, `docs/sessions/` for
+session-by-session summaries, and `docs/dataset-changelog.md` for the history of
+dataset-affecting changes (campaigns added, schema changes, coverage-moving
+bugfixes). Current dataset: 15 campaigns, ~3.84M rows; CPI/env fusion 91.3%
+matched overall (57.7% with both Tair_C and Si) — run
+`python scripts/diagnose_cpi_fusion.py` for the full per-campaign breakdown. Key
+open items:
 
 - **ARM qv NaN**: 63.6% NaN (real data sparsity in dry upper troposphere, not parser bug)
 - **ARM 2000-03-13 CPI timestamp anomaly**: CPI has images at 00:00-01:xx UTC with no
@@ -63,24 +69,6 @@ session-by-session summaries. Key items:
   `09_lwc_crossval.csv`. Needs an independent cross-check (e.g. Ophir TDL) to resolve.
 - **MIDCIX Alt_m** at 96.7%, not 100%: navigation (`FP`) files cover 2 more flight
   dates than the water-vapor (JW) files that `load_midcix()` keys rows off of.
-- **MPACE**: `parsers/mpace.py` added 2026-07-06, loading the UND Citation NASA Ames
-  files from `data/raw/MPACE` (15 flights, 2004-09-30 to 2004-10-21, Barrow AK).
-  No water-vapor instrument was flown on this platform, so Si/qv are NaN for every
-  record — only Tair_C/P_hPa/Lat/Lon/Alt_m are populated. CPI fusion: 99.9% of
-  ~36k CPI images get a matched timestamp, 76.3% get Tair_C.
-- **CPI/env fusion** (as of 2026-07-06, post-MPACE): 91.3% of 3.2M CPI images have a
-  matched thermo timestamp (±1s, up from 89.1% pre-MPACE); 57.7% have both Tair_C and
-  Si (unchanged — MPACE contributes matches but no Si/qv). Run
-  `python scripts/diagnose_cpi_fusion.py` for the full per-campaign breakdown.
-- Resolved 2026-07-05: ESCAPE P_hPa<50 residual, ESCAPE 2022-06-10 sensor-failure mask
-  gap, IPHEX/OLYMPEX qv/Si bound asymmetry, POSIDON P_hPa sentinel bug, OLYMPEX
-  19_51_41-flight chilled-mirror fault masking, Alt_m recovery for CRYSTAL-FACE-NASA,
-  CRYSTAL-FACE-UND, MACPEX, and MIDCIX (79.2% → 98.2% overall Alt_m coverage), an
-  MC3E CPI timestamp timezone mislabeling, CRYSTAL-FACE-NASA's ALIAS Si fallback, and
-  CRYSTAL-FACE-UND's missing 2002-07-11 flight segment — see
-  `docs/decisions/2026-07-05-open-issues-resolved.md`,
-  `docs/decisions/2026-07-05-qc9-iphex-olympex.md`, and
-  `docs/decisions/2026-07-05-cpi-fusion-gap-fixes.md`.
 
 ## Running the pipeline
 
