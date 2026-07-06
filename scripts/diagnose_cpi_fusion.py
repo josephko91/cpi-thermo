@@ -3,14 +3,17 @@
 CPI Data Fusion Diagnostic
 ===========================
 Tests the combined environmental data from main.py against CPI imagery timestamps.
-Measures how much of the CPI image archive has concurrent Tair_C and Si measurements.
+Measures how much of the CPI image archive has a concurrent measurement for each
+standard variable (Tair_C, P_hPa, Alt_m, Lat, Lon, qv, Si), not just Tair_C/Si.
 
 Outputs (logs/cpi_fusion/<timestamp>/ and figs/cpi_fusion/<timestamp>/, with a
 `latest` symlink in each kept pointing at the newest run):
-  cpi_fusion_summary.csv         - per-campaign coverage table
-  cpi_fusion_report.txt          - text summary + bug notes
-  cpi_fusion_coverage.png        - bar chart of coverage rates
-  cpi_fusion_si_tair_scatter.png - Si vs Tair_C colored by campaign
+  cpi_fusion_summary.csv           - per-campaign coverage table (one row per campaign,
+                                      one pct_<var> column per standard variable)
+  cpi_fusion_report.txt            - text summary + bug notes
+  cpi_fusion_coverage.png          - bar chart of Tair_C/Si/matched coverage rates
+  cpi_fusion_variable_heatmap.png  - heatmap of per-variable coverage, all campaigns
+  cpi_fusion_si_tair_scatter.png   - Si vs Tair_C colored by campaign
 
 Usage:
     python scripts/diagnose_cpi_fusion.py
@@ -54,6 +57,9 @@ FIGS_DIR      = ROOT / "figs" / "cpi_fusion" / RUN_TS
 
 MATCH_TOLERANCE_S = 1   # seconds; CPI timestamps are whole-second
 
+# Standard variables to check coverage for, in report/table display order.
+COVERAGE_VARS = ["Tair_C", "P_hPa", "Alt_m", "Lat", "Lon", "qv", "Si"]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,7 +101,7 @@ def merge_campaign(
 
     merged = pd.merge_asof(
         cpi_s,
-        env_s[["Timestamp", "Tair_C", "Si"]],
+        env_s[["Timestamp"] + COVERAGE_VARS],
         left_on="datetime",
         right_on="Timestamp",
         direction="nearest",
@@ -111,17 +117,21 @@ def merge_campaign(
 def compute_coverage(cpi: pd.DataFrame, env: pd.DataFrame) -> pd.DataFrame:
     """
     For each campaign present in the CPI data, compute:
-      - n_cpi_images   : total CPI images
-      - n_env_records  : env records available
-      - n_matched      : CPI images with a env timestamp within tolerance
-      - n_tair_valid   : matched images with non-null Tair_C
-      - n_si_valid     : matched images with non-null Si
-      - n_both_valid   : matched images with both valid
-      - pct_matched    : n_matched / n_cpi_images
-      - pct_both       : n_both_valid / n_cpi_images
+      - n_cpi_images        : total CPI images
+      - n_env_records       : env records available
+      - n_matched           : CPI images with an env timestamp within tolerance
+      - n_<var>_valid       : matched images with non-null <var>, for each of
+                              COVERAGE_VARS (Tair_C, P_hPa, Alt_m, Lat, Lon, qv, Si)
+      - n_both_valid        : matched images with both Tair_C and Si (legacy alias,
+                              kept for the existing bar chart / scatter plot)
+      - n_all_valid         : matched images with every COVERAGE_VARS variable valid
+      - pct_matched/pct_<var>/pct_both/pct_all : as fractions of n_cpi_images
     """
     env_campaigns = set(env["Campaign"].unique())
     rows = []
+
+    empty_counts = {f"n_{v}_valid": 0 for v in COVERAGE_VARS}
+    empty_pcts = {f"pct_{v}": 0.0 for v in COVERAGE_VARS}
 
     for cpi_name, env_name in sorted(CPI_TO_ENV.items()):
         cpi_sub = cpi[cpi["campaign"] == cpi_name]
@@ -139,13 +149,13 @@ def compute_coverage(cpi: pd.DataFrame, env: pd.DataFrame) -> pd.DataFrame:
                 "n_cpi_images": n_cpi,
                 "n_env_records": 0,
                 "n_matched": 0,
-                "n_tair_valid": 0,
-                "n_si_valid": 0,
+                **empty_counts,
                 "n_both_valid": 0,
+                "n_all_valid": 0,
                 "pct_matched": 0.0,
-                "pct_tair": 0.0,
-                "pct_si": 0.0,
+                **empty_pcts,
                 "pct_both": 0.0,
+                "pct_all": 0.0,
                 "status": "env_missing",
             })
             continue
@@ -153,10 +163,11 @@ def compute_coverage(cpi: pd.DataFrame, env: pd.DataFrame) -> pd.DataFrame:
         env_sub = env[env["Campaign"] == env_name]
         merged = merge_campaign(cpi_sub, env_sub)
 
-        n_matched    = int(merged["Timestamp"].notna().sum())
-        n_tair_valid = int(merged["Tair_C"].notna().sum())
-        n_si_valid   = int(merged["Si"].notna().sum())
+        n_matched   = int(merged["Timestamp"].notna().sum())
+        var_counts  = {f"n_{v}_valid": int(merged[v].notna().sum()) for v in COVERAGE_VARS}
+        var_pcts    = {f"pct_{v}": round(var_counts[f"n_{v}_valid"] / n_cpi * 100, 1) for v in COVERAGE_VARS}
         n_both_valid = int(merged[["Tair_C", "Si"]].notna().all(axis=1).sum())
+        n_all_valid  = int(merged[COVERAGE_VARS].notna().all(axis=1).sum())
 
         rows.append({
             "campaign_cpi": cpi_name,
@@ -164,13 +175,13 @@ def compute_coverage(cpi: pd.DataFrame, env: pd.DataFrame) -> pd.DataFrame:
             "n_cpi_images": n_cpi,
             "n_env_records": n_env,
             "n_matched": n_matched,
-            "n_tair_valid": n_tair_valid,
-            "n_si_valid": n_si_valid,
+            **var_counts,
             "n_both_valid": n_both_valid,
+            "n_all_valid": n_all_valid,
             "pct_matched": round(n_matched / n_cpi * 100, 1),
-            "pct_tair":    round(n_tair_valid / n_cpi * 100, 1),
-            "pct_si":      round(n_si_valid   / n_cpi * 100, 1),
-            "pct_both":    round(n_both_valid  / n_cpi * 100, 1),
+            **var_pcts,
+            "pct_both": round(n_both_valid / n_cpi * 100, 1),
+            "pct_all":  round(n_all_valid  / n_cpi * 100, 1),
             "status": "ok",
         })
 
@@ -196,9 +207,9 @@ def plot_coverage_bars(summary: pd.DataFrame, out_path: Path) -> None:
     x = np.arange(len(campaigns))
     w = 0.28
 
-    bars_matched = ax.bar(x - w, summary["pct_matched"], w, label="Timestamp matched", color="#4c72b0")
-    bars_tair    = ax.bar(x,     summary["pct_tair"],    w, label="Tair_C valid",       color="#dd8452")
-    bars_si      = ax.bar(x + w, summary["pct_si"],      w, label="Si valid",            color="#55a868")
+    bars_matched = ax.bar(x - w, summary["pct_matched"],  w, label="Timestamp matched", color="#4c72b0")
+    bars_tair    = ax.bar(x,     summary["pct_Tair_C"],   w, label="Tair_C valid",       color="#dd8452")
+    bars_si      = ax.bar(x + w, summary["pct_Si"],       w, label="Si valid",            color="#55a868")
 
     ax.set_xticks(x)
     ax.set_xticklabels(campaigns, rotation=35, ha="right", fontsize=8)
@@ -215,6 +226,43 @@ def plot_coverage_bars(summary: pd.DataFrame, out_path: Path) -> None:
         if row["status"] == "env_missing":
             ax.text(idx, 3, "no env\ndata", ha="center", va="bottom",
                     fontsize=6, color="red", style="italic")
+
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_variable_heatmap(summary: pd.DataFrame, out_path: Path) -> None:
+    """Heatmap of per-variable coverage (% of CPI images), all campaigns x all vars."""
+    ok = summary[summary["status"] == "ok"].sort_values("campaign_cpi")
+    if ok.empty:
+        return
+
+    cols = ["pct_matched"] + [f"pct_{v}" for v in COVERAGE_VARS] + ["pct_all"]
+    labels = ["matched"] + COVERAGE_VARS + ["ALL"]
+    data = ok[cols].to_numpy(dtype=float)
+    campaigns = ok["campaign_cpi"].tolist()
+
+    fig, ax = plt.subplots(figsize=(1.0 * len(labels) + 2, 0.45 * len(campaigns) + 2))
+    im = ax.imshow(data, cmap="RdYlGn", vmin=0, vmax=100, aspect="auto")
+
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=8)
+    ax.set_yticks(range(len(campaigns)))
+    ax.set_yticklabels(campaigns, fontsize=8)
+
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            v = data[i, j]
+            color = "white" if v < 35 or v > 80 else "black"
+            ax.text(j, i, f"{v:.0f}", ha="center", va="center", fontsize=7, color=color)
+
+    ax.set_title("CPI image coverage by variable (% of campaign's CPI images, ±1 s tolerance)")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("% covered")
+    cbar.ax.yaxis.set_major_formatter(mticker.PercentFormatter())
 
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -265,12 +313,13 @@ def write_report(summary: pd.DataFrame, env: pd.DataFrame, out_path: Path) -> st
     total_cpi     = int(summary["n_cpi_images"].sum())
     total_matched = int(ok["n_matched"].sum())
     total_both    = int(ok["n_both_valid"].sum())
+    total_all     = int(ok["n_all_valid"].sum())
     pct_matched   = total_matched / total_cpi * 100 if total_cpi else 0
     pct_both      = total_both    / total_cpi * 100 if total_cpi else 0
+    pct_all       = total_all     / total_cpi * 100 if total_cpi else 0
 
     env_campaigns = sorted(env["Campaign"].unique().tolist())
-    n_tair_env    = int(env["Tair_C"].notna().sum())
-    n_si_env      = int(env["Si"].notna().sum())
+    n_var_env = {v: int(env[v].notna().sum()) for v in COVERAGE_VARS}
 
     report_lines = [
         "=" * 70,
@@ -281,8 +330,12 @@ def write_report(summary: pd.DataFrame, env: pd.DataFrame, out_path: Path) -> st
         "-" * 40,
         f"  Total env records    : {len(env):,}",
         f"  Campaigns with data  : {len(env_campaigns)}  {env_campaigns}",
-        f"  Records w/ Tair_C    : {n_tair_env:,}  ({n_tair_env/len(env)*100:.1f}%)",
-        f"  Records w/ Si        : {n_si_env:,}  ({n_si_env/len(env)*100:.1f}%)",
+    ]
+    for v in COVERAGE_VARS:
+        report_lines.append(
+            f"  Records w/ {v:<10}: {n_var_env[v]:,}  ({n_var_env[v]/len(env)*100:.1f}%)"
+        )
+    report_lines += [
         "",
         "CPI IMAGE ARCHIVE SUMMARY",
         "-" * 40,
@@ -292,23 +345,30 @@ def write_report(summary: pd.DataFrame, env: pd.DataFrame, out_path: Path) -> st
         "",
         "FUSION COVERAGE (±1 s timestamp tolerance)",
         "-" * 40,
-        f"  CPI images with matched env timestamp : {total_matched:,} / {total_cpi:,}  ({pct_matched:.1f}%)",
-        f"  CPI images with both Tair_C & Si      : {total_both:,} / {total_cpi:,}  ({pct_both:.1f}%)",
+        f"  CPI images with matched env timestamp   : {total_matched:,} / {total_cpi:,}  ({pct_matched:.1f}%)",
+        f"  CPI images with both Tair_C & Si         : {total_both:,} / {total_cpi:,}  ({pct_both:.1f}%)",
+        f"  CPI images with ALL {len(COVERAGE_VARS)} standard variables : {total_all:,} / {total_cpi:,}  ({pct_all:.1f}%)",
+        "    (" + ", ".join(COVERAGE_VARS) + ")",
         "",
-        "PER-CAMPAIGN BREAKDOWN",
+        "PER-CAMPAIGN BREAKDOWN, PER VARIABLE (% of that campaign's CPI images)",
         "-" * 40,
     ]
 
-    # Table header
-    hdr = f"  {'Campaign':<22} {'CPI imgs':>9} {'matched%':>9} {'Tair%':>7} {'Si%':>7} {'both%':>7}"
+    # Table header — one column per COVERAGE_VARS entry, plus matched/ALL
+    var_headers = [v[:7] for v in COVERAGE_VARS]
+    hdr = (
+        f"  {'Campaign':<20} {'CPI imgs':>9} {'match%':>7}"
+        + "".join(f" {h:>7}" for h in var_headers)
+        + f" {'ALL%':>7}"
+    )
     report_lines.append(hdr)
     report_lines.append("  " + "-" * (len(hdr) - 2))
     for _, row in summary.sort_values("campaign_cpi").iterrows():
         flag = " [NO ENV]" if row["status"] == "env_missing" else ""
+        var_cells = "".join(f" {row[f'pct_{v}']:>6.1f}%" for v in COVERAGE_VARS)
         report_lines.append(
-            f"  {row['campaign_cpi']:<22} {int(row['n_cpi_images']):>9,}"
-            f" {row['pct_matched']:>8.1f}% {row['pct_tair']:>6.1f}% {row['pct_si']:>6.1f}%"
-            f" {row['pct_both']:>6.1f}%{flag}"
+            f"  {row['campaign_cpi']:<20} {int(row['n_cpi_images']):>9,}"
+            f" {row['pct_matched']:>6.1f}%{var_cells} {row['pct_all']:>6.1f}%{flag}"
         )
 
     report_lines += [
@@ -424,6 +484,7 @@ def main() -> None:
 
     # Plots
     plot_coverage_bars(summary, FIGS_DIR / "cpi_fusion_coverage.png")
+    plot_variable_heatmap(summary, FIGS_DIR / "cpi_fusion_variable_heatmap.png")
     plot_si_tair_scatter(env, FIGS_DIR / "cpi_fusion_si_tair_scatter.png")
 
     # Text report
