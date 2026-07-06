@@ -27,8 +27,11 @@ campaigns:
       
   CRYSTAL-FACE-UND:
     path: ./data/raw/CRYSTAL-FACE-UND
-    pattern: "*MIS.CIT"
+    pattern: "*MIS*.CIT"
     # MIS.CIT files live under the ND_MIS/ subdirectory; loader uses rglob.
+    # "*MIS*.CIT" (not "*MIS.CIT") also picks up the "_L2" revised-segment
+    # file that exists only for 2002-07-11 (a second, non-overlapping
+    # flight-segment recording covering 17:59-22:15 UTC that day).
     h2o_ranking:
       - LH-unspecified
       - chilled-mirror

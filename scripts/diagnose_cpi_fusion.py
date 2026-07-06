@@ -36,6 +36,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from main import process_all_campaigns, DEFAULT_CAMPAIGN_CONFIG
+from parsers.cpi_timestamps import (
+    CPI_TO_ENV_CAMPAIGN as CPI_TO_ENV,
+    load_cpi_embeddings_timestamps,
+)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -45,36 +49,7 @@ DEFAULT_ENV   = ROOT / "data" / "out" / "combined_env_data.parquet"
 DIAG_DIR      = ROOT / "logs" / "diagnostics"
 FIGS_DIR      = ROOT / "figs"
 
-# ---------------------------------------------------------------------------
-# Campaign name normalisation
-# CPI CSV uses underscores (CRYSTAL_FACE_UND), env data uses hyphens.
-# ---------------------------------------------------------------------------
-CPI_TO_ENV: dict[str, str] = {
-    "AIRS_II":           "AIRS-II",
-    "ARM":               "ARM",
-    "ATTREX":            "ATTREX",
-    "CRYSTAL_FACE_NASA": "CRYSTAL-FACE-NASA",
-    "CRYSTAL_FACE_UND":  "CRYSTAL-FACE-UND",
-    "ICE_L":             "ICE-L",
-    "IPHEX":             "IPHEX",
-    "ISDAC":             "ISDAC",
-    "MACPEX":            "MACPEX",
-    "MC3E":              "MC3E",
-    "MIDCIX":            "MIDCIX",
-    "MPACE":             "MPACE",   # no env parser exists
-    "OLYMPEX":           "OLYMPEX",
-    "POSIDON":           "POSIDON",
-    "ESCAPE":            "ESCAPE",
-}
-
 MATCH_TOLERANCE_S = 1   # seconds; CPI timestamps are whole-second
-
-# Some CPI archives were recorded in local time rather than UTC.
-# Apply these hour offsets to convert CPI timestamps to UTC before matching.
-# MC3E was flown from Oklahoma in May 2011; CPI clock was set to CDT (UTC-5).
-CPI_UTC_OFFSETS: dict[str, int] = {
-    "MC3E": 5,   # CDT → UTC: add 5 hours
-}
 
 
 # ---------------------------------------------------------------------------
@@ -82,15 +57,10 @@ CPI_UTC_OFFSETS: dict[str, int] = {
 # ---------------------------------------------------------------------------
 
 def load_cpi(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-    # Apply per-campaign UTC corrections where CPI clock was in local time.
-    for campaign, hours in CPI_UTC_OFFSETS.items():
-        mask = df["campaign"] == campaign
-        if mask.any():
-            df.loc[mask, "datetime"] = df.loc[mask, "datetime"] + pd.Timedelta(hours=hours)
-    df["campaign_env"] = df["campaign"].map(CPI_TO_ENV)
-    return df
+    # Campaign-name normalisation and known UTC-offset corrections (e.g. MC3E
+    # recorded in CDT) live in parsers/cpi_timestamps.py, the single source of
+    # truth for anyone loading this archive.
+    return load_cpi_embeddings_timestamps(path)
 
 
 def load_or_build_env(env_path: Path, rebuild: bool) -> pd.DataFrame:
@@ -344,11 +314,12 @@ def write_report(summary: pd.DataFrame, env: pd.DataFrame, out_path: Path) -> st
         "REMAINING KNOWN ISSUES",
         "=" * 70,
         "",
-        "1. CAMPAIGN NAME MISMATCH (CPI vs env data) — HANDLED IN THIS SCRIPT",
+        "1. CAMPAIGN NAME MISMATCH (CPI vs env data) — HANDLED CENTRALLY",
         "   CPI CSV uses underscores (CRYSTAL_FACE_UND, AIRS_II, ICE_L).",
         "   main.py / env data uses hyphens (CRYSTAL-FACE-UND, AIRS-II, ICE-L).",
         "   Impact: any direct join on campaign name will produce zero matches.",
-        "   Mitigation: CPI_TO_ENV mapping normalises names in this script.",
+        "   Mitigation: parsers/cpi_timestamps.py CPI_TO_ENV_CAMPAIGN normalises",
+        "   names; load_cpi_embeddings_timestamps() is the canonical loader.",
         "",
         "2. MPACE IN CPI BUT NO PARSER",
         "   MPACE has ~36k CPI images but no env parser (no suitable water vapor",
@@ -369,8 +340,11 @@ def write_report(summary: pd.DataFrame, env: pd.DataFrame, out_path: Path) -> st
         "   source exists in the UND Citation dataset for those dates.",
         "",
         "6. MC3E CPI TIMEZONE CORRECTION APPLIED",
-        "   MC3E CPI timestamps were recorded in CDT (UTC-5), not UTC.",
-        "   A +5h correction is applied in load_cpi() for this campaign.",
+        "   MC3E CPI timestamps were recorded in CDT (UTC-5), not UTC — a bug in",
+        "   the raw CPI archive's datetime column, not in the env pipeline.",
+        "   Corrected centrally in parsers/cpi_timestamps.py",
+        "   (CPI_UTC_OFFSET_HOURS), so every consumer of this archive gets the",
+        "   fix automatically rather than re-discovering it.",
         "   Evidence: CPI images on 2011-05-23 fall 16:35-19:32, while env data",
         "   starts at 21:20 UTC — consistent with a 5-hour CDT offset.",
         "",

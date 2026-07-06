@@ -62,7 +62,7 @@ DEFAULT_CAMPAIGN_CONFIG: Dict[str, Dict] = {
     },
     "CRYSTAL-FACE-UND": {
         "path": "./data/raw/CRYSTAL-FACE-UND",
-        "pattern": "*MIS.CIT",
+        "pattern": "*MIS*.CIT",
         "loader": "load_crystal_face_und",
         "extractor": extract_crystal_face_und_standard,
     },

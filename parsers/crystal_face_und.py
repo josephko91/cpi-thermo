@@ -108,7 +108,11 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
     # POS system). This campaign has no other altitude source, and NAV.CIT
     # was never previously read, leaving Alt_m/Lat/Lon NaN for the whole
     # campaign. Same ICARTT layout as MET.CIT, so the same reader applies.
-    nav_filename = filepath_mis.name.replace("MIS.CIT", "NAV.CIT")
+    # Replace the bare "MIS" token (not the full "MIS.CIT" suffix) so this
+    # also matches the "_L2" revised-segment variant, e.g.
+    # "ND20020711__MIS_L2.CIT" -> "ND20020711__NAV_L2.CIT" (2002-07-11 has a
+    # second flight-segment recorded separately across every instrument).
+    nav_filename = filepath_mis.name.replace("MIS", "NAV")
     nav_candidates = [
         filepath_mis.parent / nav_filename,
         filepath_mis.parent.parent / "ND_NAV" / nav_filename,
@@ -125,7 +129,8 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
     # Find corresponding MET.CIT file.
     # When files are in instrument subdirectories (ND_MIS/ and ND_MET/), we must
     # also replace the directory name, not just the filename suffix.
-    met_filename = filepath_mis.name.replace("MIS.CIT", "MET.CIT")
+    # (See NAV lookup above for why "MIS" -> "MET" is a bare-token replace.)
+    met_filename = filepath_mis.name.replace("MIS", "MET")
     met_candidates = [
         filepath_mis.parent / met_filename,                    # same directory (flat layout)
         filepath_mis.parent.parent / "ND_MET" / met_filename,  # sibling ND_MET/ subdir
@@ -182,17 +187,19 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
 
 def load_crystal_face_und(
     data_dir: Union[str, Path],
-    pattern: str = "*MIS.CIT"
+    pattern: str = "*MIS*.CIT"
 ) -> pd.DataFrame:
     """
     Load all CRYSTAL-FACE UND files from a directory.
-    
+
     Parameters
     ----------
     data_dir : str or Path
         Directory containing *MIS.CIT files.
     pattern : str, optional
-        Glob pattern for MIS.CIT files (default: "*MIS.CIT").
+        Glob pattern for MIS.CIT files (default: "*MIS*.CIT" -- the "*MIS*"
+        form, not "*MIS.CIT", also matches the "_L2" revised-segment variant
+        that exists for 2002-07-11, e.g. "ND20020711__MIS_L2.CIT").
         
     Returns
     -------
