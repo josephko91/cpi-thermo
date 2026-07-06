@@ -1,6 +1,6 @@
 # 2026-07-06 — QC3 stuck-sensor investigation
 
-## Fix applied in commit: (pending — AIRS-II and ARM altitude fixes)
+## Fix applied in commit: 60a92b5 (AIRS-II and ARM altitude fixes)
 
 ## What we found
 
