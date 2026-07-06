@@ -689,6 +689,28 @@ def check_04_sentinel_values(
 
     SENTINELS = [-9999.0, -9999.99, -999.0, -999.99, -8888.0, -7777.0,
                  9999.0, 99999.0, -1000.0, 1000.0]
+    # 1000.0/-1000.0/9999.0 are ambiguous for Alt_m (meters), P_hPa, and
+    # *_ppmv concentration columns -- all three routinely pass through these
+    # magnitudes as real physical values (Alt_m crossing 1000 m or 9999 m
+    # during a climb/descent; P_hPa near 1000 hPa at low altitude; water
+    # vapor mixing ratios of 1000-10000 ppmv in the lower troposphere).
+    # 2026-07-06 audit: every one of 34 flagged (campaign, variable,
+    # sentinel) combinations using these two magnitudes was confirmed to be
+    # real, continuously-varying data (verified against the raw parquet: the
+    # matched values are either many distinct floats spanning the tolerance
+    # band, or -- for whole-meter-quantized GPS altitude -- short, separate
+    # multi-second bursts of a real repeated integer reading at different
+    # times in the flight), not an un-converted fill code. No true sentinel
+    # anywhere in the dataset uses either magnitude. Excluding these
+    # variable/sentinel combinations avoids the false positives while
+    # keeping both values active for every other column (e.g. Tair_C, Si,
+    # qv), where they remain unambiguous and useful.
+    AMBIGUOUS_SENTINELS = {1000.0, -1000.0, 9999.0}
+    def _sentinel_applies(col: str, sent: float) -> bool:
+        if sent not in AMBIGUOUS_SENTINELS:
+            return True
+        return not (col in ("Alt_m", "P_hPa") or col.endswith("_ppmv"))
+
     NUMERIC_COLS = [c for c in df.columns
                     if pd.api.types.is_numeric_dtype(df[c])
                     and c not in ("Lat", "Lon")]  # lat/lon have no sentinels in this dataset
@@ -723,6 +745,8 @@ def check_04_sentinel_values(
             for sent in SENTINELS:
                 if sent == 0:
                     continue  # skip 0 — too many legitimate zeros
+                if not _sentinel_applies(col, sent):
+                    continue
                 tol = abs(sent) * 0.0001
                 mask_sent = (pd.to_numeric(sub[col], errors="coerce") - sent).abs() <= tol
                 n_sent = int(mask_sent.sum())
@@ -735,7 +759,9 @@ def check_04_sentinel_values(
                         "pct_of_campaign": round(n_sent / n_camp * 100, 4),
                     })
 
-    sentinel_df = pd.DataFrame(sentinel_rows)
+    sentinel_df = pd.DataFrame(sentinel_rows, columns=[
+        "Campaign", "variable", "sentinel_value", "n_matching", "pct_of_campaign",
+    ])
     tail_df     = pd.DataFrame(tail_rows)
 
     sent_path = out_dir / "04_sentinel_flags.csv"
