@@ -1,6 +1,6 @@
 # 2026-07-06 — QC2 T_altitude_inconsistent investigation
 
-## Fix applied in commit: (pending — two distinct ARM bugs)
+## Fix applied in commit: c36bd12 (two distinct ARM bugs)
 
 ## What we found
 
