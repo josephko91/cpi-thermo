@@ -19,6 +19,70 @@ engineering logs.
 
 ---
 
+## 2026-07-06 — Systematic QA/QC flag investigation (7 fixes, ARM/AIRS-II/CRYSTAL-FACE-NASA corrected)
+
+**Commits:** `ee1a933`, `c36bd12`, `18f19e3`, `fad5479`, `60a92b5`, `6853008`
+(parser/check fixes); see `docs/decisions/2026-07-06-qc{2,3,4,7,8}-*.md` and
+`2026-07-06-qc6-zero-si-flight-days.md` for the full per-check writeups.
+**Campaigns:** 15 (no change)
+
+Cross-referenced every QC1-QC9 flag against existing documentation and
+found 7 gaps with zero prior investigation, worked through in priority
+order. Row count barely moves (this was a data-*correctness* pass, not a
+coverage-recovery one — most fixes correct wrong values in place or
+suppress false-positive diagnostics rather than add/remove rows), but QC
+health improved substantially:
+
+| Check | Before | After |
+|---|---|---|
+| QC2 Internal consistency | 89,318 flags | 80,645 flags |
+| QC3 Stuck-sensor | 1,567 runs (7 campaigns) | 309 runs (4 campaigns) |
+| QC4 Sentinel values | 682 flags (15 campaigns) | 0 |
+| QC7 Duplicate timestamps | 8,910 rows | 2 rows |
+| QC8 Vertical profile plausibility | 47 bins (11 campaigns) | 6 bins (3 campaigns) |
+
+Real bugs fixed (not just check recalibration):
+- **CRYSTAL-FACE-NASA**: `_round_timestamp_to_second()` used banker's
+  rounding, colliding two adjacent half-second-sampled JLH readings onto one
+  timestamp (4,454 spurious duplicate rows in `JW20020719.WB57` alone).
+  Switched to `floor()`.
+- **ARM**: two independent GPS altitude failure modes corrected via
+  fallback to `Pressure_Altitude_m` — a lock-acquisition glitch (GPS stuck
+  at a bogus value right after first fix, ~12,853 rows across 4 files) and a
+  mid-flight freeze (GPS holds a stale value for minutes while
+  `Pressure_Altitude_m` keeps changing, ~70,000 rows across nearly every
+  flight file). Also masked a Rosemount probe warm-up fault (frozen at
+  -64.5°C for the first 23 minutes of one flight, 5,668 rows) — ARM Tair_C
+  coverage: 100% → 99.0%.
+- **AIRS-II**: `ALT` (IRS Baro-Inertial Altitude) reads exactly `0.0` for
+  extended stretches (up to 4,413 of 33,444 samples in one flight) — now
+  falls back to GPS-derived `GGALT` per-sample.
+
+Check-logic bugs fixed (no parser/data changes, the check itself was wrong):
+- **QC8**: computed the qv-saturation reference from the *ISA theoretical*
+  temperature using the *ice* formula, instead of the bin's own *observed*
+  mean temperature and the *liquid* formula (which QC2 already used
+  correctly) — 41 of 47 flagged bins were false positives once corrected.
+- **QC4**: `1000.0`/`9999.0` are physically plausible values for `Alt_m`,
+  `P_hPa`, and `*_ppmv` columns, producing false "sentinel" matches on real
+  continuously-varying data; excluded those combinations.
+- **QC2**: AIRS-II was missing from `IN_CLOUD_CAMPAIGNS` despite using the
+  same chilled-mirror instrument as its documented siblings.
+
+Investigated and accepted as genuine data limitations, no fix: MACPEX's
+independent Si-vs-qv instrument fallback (77 rows), ATTREX's low-absolute-
+humidity measurement noise (13 rows), a MPACE-style raw-instrument clock
+glitch, and QC6's remaining zero-Si flight-days (ARM/IPHEX/OLYMPEX/ATTREX/
+MACPEX — all traced to instruments genuinely not operating that day/flight).
+
+| Metric | Before | After |
+|---|---|---|
+| Rows | 3,841,812 | 3,841,797 (-15, from the CRYSTAL-FACE-NASA dedup) |
+| Campaigns | 15 | 15 |
+| ARM Tair_C coverage | 100.0% | 99.0% |
+| CPI/env fusion (matched) | 91.3% | 91.3% (unchanged) |
+| CPI/env fusion (Tair_C + Si) | 57.7% | 57.7% (unchanged) |
+
 ## 2026-07-06 — MIDCIX fallback fix + MPACE campaign added
 
 **Commits:** `e2ac25b` (MIDCIX), `135d35d` (MPACE)
