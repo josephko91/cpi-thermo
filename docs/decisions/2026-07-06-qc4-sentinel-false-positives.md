@@ -1,6 +1,6 @@
 # 2026-07-06 — QC4 sentinel value check-logic bug
 
-## Fix applied in commit: (pending — qa_checks.py check_04_sentinel_values)
+## Fix applied in commit: 6853008 (qa_checks.py check_04_sentinel_values)
 
 ## What we found
 
