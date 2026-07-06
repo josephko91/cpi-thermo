@@ -30,7 +30,15 @@ from .utils import (
 
 
 def _round_timestamp_to_second(series: pd.Series) -> pd.Series:
-    return pd.to_datetime(series, utc=True, errors="coerce").dt.round("s")
+    # .dt.round("s") uses round-half-to-even ("banker's rounding"): X.5-second
+    # values round toward the nearest EVEN second, not consistently up. Some
+    # source files (e.g. JW20020719.WB57) sample at a fixed .5s offset, so two
+    # adjacent, physically distinct 1 Hz samples (e.g. :03.5 and :04.5) both
+    # round to :04 and collide into a spurious duplicate-timestamp row. floor()
+    # truncates consistently in one direction, preserving the original 1s
+    # spacing with no collisions (functionally equivalent given the ±1s CPI
+    # fusion match tolerance used throughout this pipeline).
+    return pd.to_datetime(series, utc=True, errors="coerce").dt.floor("s")
 
 
 def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
