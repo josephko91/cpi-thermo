@@ -113,14 +113,14 @@ def load_midcix(
 ) -> pd.DataFrame:
     """
     Load all MidCiX files from a directory.
-    
+
     Parameters
     ----------
     data_dir : str or Path
         Directory containing MidCiX JLH data files.
     pattern : str, optional
         Glob pattern for matching files (default: "*").
-        
+
     Returns
     -------
     pd.DataFrame
@@ -128,20 +128,49 @@ def load_midcix(
     """
     data_dir = Path(data_dir)
     files = [f for f in data_dir.glob(pattern) if f.is_file()]
-    
+
     if not files:
         raise FileNotFoundError(f"No files matching '{pattern}' found in {data_dir}")
-    
+
     dfs = []
     for f in sorted(files):
         try:
             dfs.append(load_midcix_file(f))
         except Exception as e:
             print(f"Warning: Could not load {f.name}: {e}")
-    
+
     combined = pd.concat(dfs, ignore_index=True)
     combined["Campaign"] = "MIDCIX"
-    
+
+    # FP/ (navigation) covers 2 more flight dates than the JW (water vapor)
+    # files above (2004-04-22, 2004-04-27) -- JLH wasn't operating those
+    # days, so no Tair_C/Si/qv is possible, but position data still exists
+    # and was previously dropped entirely since load_midcix_file only emits
+    # rows keyed to JW timestamps. Add position-only rows for those dates
+    # so CPI images on them at least get Lat/Lon/Alt_m.
+    fp_dir = data_dir / "FP"
+    if fp_dir.exists():
+        jw_dates = set(combined["Timestamp"].dropna().dt.date.unique())
+        fp_files = [f for f in fp_dir.glob("*.WB57") if f.is_file()]
+        fp_extra_dfs = []
+        for f in sorted(fp_files):
+            try:
+                fp_df = load_mms_file(f)
+            except Exception as e:
+                print(f"Warning: Could not load FP file {f.name}: {e}")
+                continue
+            fp_dates = fp_df["Timestamp"].dropna().dt.date.unique()
+            if len(fp_dates) and fp_dates[0] not in jw_dates:
+                fp_df = fp_df.copy()
+                fp_df["source_file"] = f"FP-fallback:{f.name}"
+                fp_extra_dfs.append(fp_df)
+        if fp_extra_dfs:
+            fp_extra = pd.concat(fp_extra_dfs, ignore_index=True)
+            fp_extra["Campaign"] = "MIDCIX"
+            combined = pd.concat([combined, fp_extra], ignore_index=True, sort=False)
+            print(f"  FP fallback: added {len(fp_extra):,} position-only rows for "
+                  f"{fp_extra['Timestamp'].dt.date.nunique()} JW-absent dates")
+
     return combined
 
 
