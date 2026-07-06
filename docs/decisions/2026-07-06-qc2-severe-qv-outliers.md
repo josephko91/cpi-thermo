@@ -1,6 +1,6 @@
 # 2026-07-06 — QC2 severe qv_exceeds_saturation outside the in-cloud set
 
-## Fix applied in commit: (pending — AIRS-II in-cloud classification)
+## Fix applied in commit: 18f19e3 (AIRS-II in-cloud classification)
 
 ## What we found
 
