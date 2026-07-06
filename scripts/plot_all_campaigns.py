@@ -70,7 +70,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Campaign order (roughly chronological)
 CAMPAIGN_ORDER = [
-    "ARM", "CRYSTAL-FACE-NASA", "CRYSTAL-FACE-UND", "MIDCIX",
+    "ARM", "CRYSTAL-FACE-NASA", "CRYSTAL-FACE-UND", "MIDCIX", "MPACE",
     "AIRS-II", "ICE-L", "ISDAC", "MACPEX", "MC3E",
     "ATTREX", "IPHEX", "OLYMPEX", "POSIDON", "ESCAPE",
 ]
@@ -81,6 +81,7 @@ COLORS = {
     "CRYSTAL-FACE-NASA":  "#ff7f0e",
     "CRYSTAL-FACE-UND":   "#2ca02c",
     "MIDCIX":             "#d62728",
+    "MPACE":              "#9edae5",
     "AIRS-II":            "#9467bd",
     "ICE-L":              "#8c564b",
     "ISDAC":              "#e377c2",

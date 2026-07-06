@@ -109,6 +109,7 @@ PARSER_METADATA: Dict[str, Dict[str, str]] = {
     "ESCAPE": {"file": "parsers/escape.py", "function": "extract_escape_standard"},
     "ICE-L": {"file": "parsers/ice_l.py", "function": "extract_ice_l_standard"},
     "MACPEX": {"file": "parsers/macpex.py", "function": "extract_macpex_standard"},
+    "MPACE": {"file": "parsers/mpace.py", "function": "extract_mpace_standard"},
 }
 
 RISK_HINTS: Dict[str, str] = {
@@ -118,6 +119,8 @@ RISK_HINTS: Dict[str, str] = {
     "OLYMPEX": "Extractor uses hardcoded POS_* names; raw naming mismatches can force NaNs.",
     "IPHEX": "Extractor uses hardcoded POS_* names; raw naming mismatches can force NaNs.",
     "ISDAC": "Hardcoded positional columns can fail when source naming varies.",
+    "MPACE": "No water-vapor instrument was flown on this platform, so Si/qv are "
+             "NaN for every record by design, not a parser gap.",
 }
 
 
