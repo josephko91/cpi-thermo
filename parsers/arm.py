@@ -175,6 +175,30 @@ def load_arm_file(filepath: Union[str, Path]) -> pd.DataFrame:
         above_tair = pd.to_numeric(df[col], errors="coerce") > tair + CRYO_TAIR_MARGIN
         df.loc[above_tair, col] = np.nan
 
+    # Issue D — Rosemount temperature probe warm-up/frozen-reading fault     #
+    # Empirically confirmed in citation.0303001655: for the first ~23        #
+    # minutes after the file starts, Air_Temp_Rosemount_C is frozen at       #
+    # approximately -64.5 C (fluctuating only at instrument-noise level)     #
+    # while Pressure_Altitude_m varies normally around 200-1700 m -- a       #
+    # deviation of up to -78 C from the ISA-predicted temperature at that    #
+    # altitude, physically impossible for any real atmospheric inversion.    #
+    # The reading then jumps abruptly to a plausible ~5 C and tracks         #
+    # normally for the rest of the flight. Detected via ISA deviation        #
+    # (same formula/threshold as qa_checks.py QC2) using Pressure_Altitude_m #
+    # (always available, unlike GPS_Alt_m early in a flight). Checked the    #
+    # deviation distribution across the whole campaign: excluding this      #
+    # fault, the maximum |Tair - T_isa| is well under 40 C (75th percentile  #
+    # is 5.4 C), so this threshold cleanly isolates the fault with no        #
+    # ambiguous borderline cases.                                            #
+    T_ISA_DEV_THRESHOLD = 40.0  # °C
+    t_isa_c = 15.0 - 6.5e-3 * df["Pressure_Altitude_m"].values
+    tair_fault = (pd.to_numeric(df["Air_Temp_Rosemount_C"], errors="coerce") - t_isa_c).abs() > T_ISA_DEV_THRESHOLD
+    n_tair_fault = int(tair_fault.sum())
+    if n_tair_fault:
+        df.loc[tair_fault, "Air_Temp_Rosemount_C"] = np.nan
+        print(f"  ARM QC: nulled {n_tair_fault:,} rows where Air_Temp_Rosemount_C "
+              f"deviated from ISA by >{T_ISA_DEV_THRESHOLD:.0f}°C (probe warm-up fault, {filepath.name})")
+
     # ------------------------------------------------------------------ #
     # Decode date and create timestamp                                     #
     # ------------------------------------------------------------------ #
@@ -201,14 +225,32 @@ def load_arm_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # Supersaturation w.r.t. liquid water
     df["Sw"] = sw_from_si(df["Si"], df["Air_Temp_Rosemount_C"])
 
-    # Prefer Pressure_Altitude_m over GPS_Alt_m: GPS fix can be unavailable
-    # or unreliable early in the flight; the ISA-derived pressure altitude
-    # is available throughout from the static pressure sensor.
-    df["Alt_m"] = np.where(
-        df["GPS_Alt_m"].notna() & (df["GPS_Alt_m"] > 0),
-        df["GPS_Alt_m"],
-        df["Pressure_Altitude_m"],
+    # Prefer GPS_Alt_m over Pressure_Altitude_m when the two agree (GPS is
+    # more accurate), but fall back to Pressure_Altitude_m otherwise: right
+    # after GPS first acquires a fix, the horizontal position (Lat/Lon) can
+    # lock before the vertical/altitude solution stabilizes, producing a
+    # stuck, physically-wrong GPS_Alt_m for the next 1-2 minutes (e.g.
+    # citation.0313001806.t4archive.gz: GPS_Alt_m stuck at 333 m while
+    # Pressure_Altitude_m correctly climbs through 6600-6900 m -- an 8,261 m
+    # disagreement, confirmed by QC2's T_altitude_inconsistent check).
+    # Legitimate GPS/pressure-altitude offsets (geoid vs. ICAO atmosphere)
+    # are a few hundred meters at most (median 55 m across this campaign);
+    # 1000 m is a generous margin that only catches genuine GPS glitches.
+    ALT_AGREEMENT_TOLERANCE_M = 1000.0
+    gps_alt_valid = (
+        df["GPS_Alt_m"].notna()
+        & (df["GPS_Alt_m"] > 0)
+        & df["Pressure_Altitude_m"].notna()
+        & ((df["GPS_Alt_m"] - df["Pressure_Altitude_m"]).abs() <= ALT_AGREEMENT_TOLERANCE_M)
     )
+    df["Alt_m"] = np.where(gps_alt_valid, df["GPS_Alt_m"], df["Pressure_Altitude_m"])
+    n_gps_rejected = int(
+        (df["GPS_Alt_m"].notna() & (df["GPS_Alt_m"] > 0) & ~gps_alt_valid).sum()
+    )
+    if n_gps_rejected:
+        print(f"  ARM QC: fell back to Pressure_Altitude_m for {n_gps_rejected:,} rows "
+              f"where GPS_Alt_m disagreed by >{ALT_AGREEMENT_TOLERANCE_M:.0f} m "
+              f"({filepath.name})")
 
     # Add source file tracking
     df["source_file"] = filepath.name
