@@ -1,6 +1,6 @@
 # 2026-07-06 — QC8 vertical profile plausibility check-logic bug
 
-## Fix applied in commit: (pending — qa_checks.py check_08_vertical_profiles)
+## Fix applied in commit: fad5479 (qa_checks.py check_08_vertical_profiles)
 
 ## What we found
 
