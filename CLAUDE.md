@@ -44,10 +44,14 @@ ISDAC, MACPEX, MC3E, MIDCIX, OLYMPEX, POSIDON
 
 See `docs/decisions/` for per-investigation records. Key items:
 
-- **ESCAPE residual**: 1,104 rows with P_hPa < 50 hPa from stuck/erroneous Palt driving ICAO formula
-- **IPHEX severe qv_exceeds_saturation**: 11,931 rows (4.1%) — possible rain contamination on chilled mirror
-- **OLYMPEX severe flags**: 1,341 rows — marine precipitation, LWC flag needed
 - **ARM qv NaN**: 63.6% NaN (real data sparsity in dry upper troposphere, not parser bug)
+- **IPHEX/OLYMPEX severe Si>1.05 flags** (1,391 / 128 rows): QC9 LWC cross-check
+  (`scripts/qa_checks.py`) shows only ~2% have elevated LWC — most look like genuine
+  sensor errors, not rain/cloud contamination as originally assumed. Not yet masked.
+- Resolved 2026-07-05: ESCAPE P_hPa<50 residual, ESCAPE 2022-06-10 sensor-failure mask
+  gap, IPHEX/OLYMPEX qv/Si bound asymmetry, and Alt_m recovery for CRYSTAL-FACE-NASA,
+  CRYSTAL-FACE-UND, MACPEX, and MIDCIX (79.2% → 98.2% overall Alt_m coverage) — see
+  `docs/decisions/2026-07-05-open-issues-resolved.md`.
 
 ## Running the pipeline
 

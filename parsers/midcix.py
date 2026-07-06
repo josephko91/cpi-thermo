@@ -21,6 +21,7 @@ from .utils import (
     sw_from_si,
     COMMON_NA_VALUES,
 )
+from .crystal_face_nasa import load_mms_file
 
 
 def load_midcix_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -79,7 +80,30 @@ def load_midcix_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # Convert temperature from Kelvin to Celsius
     if "T_K" in df.columns:
         df["T_C"] = df["T_K"] - 273.15
-    
+
+    # Merge position (Lat, Lon, Alt_m) from the corresponding FP navigation
+    # file. JW files carry no position data of their own; FP*.WB57 files
+    # (MMS flight path: P_ALT, LAT, LONG, TAS) share the same date-based
+    # filename suffix and the same UT-seconds-from-midnight timestamp scheme.
+    nav_filename = filepath.name.replace("JW", "FP", 1)
+    nav_candidates = [
+        filepath.parent / nav_filename,
+        filepath.parent / "FP" / nav_filename,
+    ]
+    nav_path = next((p for p in nav_candidates if p.exists()), None)
+    if nav_path is not None:
+        try:
+            nav_df = load_mms_file(nav_path)
+            df = pd.merge_asof(
+                df.sort_values("Timestamp"),
+                nav_df[["Timestamp", "Lat", "Lon", "Alt_m"]].sort_values("Timestamp"),
+                on="Timestamp",
+                direction="nearest",
+                tolerance=pd.Timedelta(seconds=2),
+            )
+        except Exception as e:
+            print(f"  Warning: Could not merge MIDCIX nav file {nav_path.name}: {e}")
+
     return df
 
 

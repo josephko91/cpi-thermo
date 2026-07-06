@@ -68,6 +68,8 @@ MACPEX_MISSING_FLAGS: list = [
     -8888, -8888.88,
     -7777, -7777.77,
     -999.99,
+    # MMS-FlightPath (LAT, LONG, TAS) missing-value codes, per its ICARTT header
+    -99999, -999999, -999,
 ]
 
 #: Instrument folder → time-column name mapping.
@@ -89,12 +91,19 @@ MACPEX_TIME_COLS: Dict[str, str] = {
     "MMS-MetData":    "Time_Start",
     "CIMS-H2O":       "Time_Start",
     "CLH-Enhanced":   "Time_Start",
+    # --- navigation (position: P_ALT, LAT, LONG, TAS) ---
+    "MMS-FlightPath": "TIME_UTC",
 }
 _TIME_FALLBACKS = ["Time_Start", "Time_Mid", "Time_Stop", "time_utc", "Time_UTC"]
 
 #: MMS-MetData raw-integer scaling factors (documented in MACPEX ICT headers).
 MMS_T_SCALE = 0.01   # raw integer × 0.01 → Kelvin
 MMS_P_SCALE = 0.10   # raw integer × 0.10 → hPa
+
+#: MMS-FlightPath raw-integer scaling factors (per its ICARTT header:
+#: "1.0, 0.001, 0.001, 0.1" for P_ALT, LAT, LONG, TAS respectively).
+MMS_ALT_SCALE = 1.0     # raw integer × 1.0   → metres (already unscaled)
+MMS_LATLON_SCALE = 0.001  # raw integer × 0.001 → degrees
 
 #: Preferred water-vapor source column names after instrument-prefix renaming.
 #: These names must cover both short and long folder-name variants (the prefix
@@ -497,6 +506,38 @@ def load_macpex(
     )
 
     # ------------------------------------------------------------------
+    # 2b. Scale MMS-FlightPath position (LAT, LONG, P_ALT) from raw integers
+    # ------------------------------------------------------------------
+    lat_raw_col = _find_col(df, ["MMS-FlightPath_LAT"])
+    lon_raw_col = _find_col(df, ["MMS-FlightPath_LONG"])
+    alt_raw_col = _find_col(df, ["MMS-FlightPath_P_ALT"])
+
+    if lat_raw_col is not None and lon_raw_col is not None:
+        df["Lat_deg"] = df[lat_raw_col] * MMS_LATLON_SCALE
+        df["Lon_deg"] = df[lon_raw_col] * MMS_LATLON_SCALE
+        df["Lat_deg"] = df["Lat_deg"].replace(
+            [f * MMS_LATLON_SCALE for f in MACPEX_MISSING_FLAGS], np.nan
+        )
+        df["Lon_deg"] = df["Lon_deg"].replace(
+            [f * MMS_LATLON_SCALE for f in MACPEX_MISSING_FLAGS], np.nan
+        )
+        print(
+            f"  Scaled position: {lat_raw_col}/{lon_raw_col} × {MMS_LATLON_SCALE} "
+            f"({df['Lat_deg'].notna().sum():,} valid rows)"
+        )
+    else:
+        print("  WARNING: MMS-FlightPath LAT/LONG columns not found — Alt_m/Lat/Lon will be NaN.")
+
+    if alt_raw_col is not None:
+        # P_ALT scale factor is 1.0 — already in metres, no conversion needed.
+        df["Alt_m"] = df[alt_raw_col] * MMS_ALT_SCALE
+        df["Alt_m"] = df["Alt_m"].replace(
+            [f * MMS_ALT_SCALE for f in MACPEX_MISSING_FLAGS], np.nan
+        )
+    else:
+        df["Alt_m"] = np.nan
+
+    # ------------------------------------------------------------------
     # 3. Physical bounds on T and P
     # ------------------------------------------------------------------
     n_bad_t = ((df["T_K"] < T_BOUNDS_K[0]) | (df["T_K"] > T_BOUNDS_K[1])).sum()
@@ -654,19 +695,21 @@ def extract_macpex_standard(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Columns: Timestamp, Tair_C, Si, Lat, Lon, Alt_m, Campaign, source_file.
     """
-    # Position columns may be prefixed with the MMS instrument name
+    # Position comes from MMS-FlightPath (Lat_deg/Lon_deg/Alt_m, scaled from
+    # raw integers in load_macpex). Fall back to older candidate names/
+    # substring search in case load_macpex wasn't used to build df.
     lat_col = _find_col(
-        df, ["MMS-Met_LAT", "MMS-Met_Lat",
+        df, ["Lat_deg", "MMS-Met_LAT", "MMS-Met_Lat",
              "MMS-MetData_LAT", "MMS-MetData_Lat", "LAT", "Lat", "latitude"]
     ) or next((c for c in df.columns if "lat" in c.lower()), None)
 
     lon_col = _find_col(
-        df, ["MMS-Met_LON", "MMS-Met_Lon",
+        df, ["Lon_deg", "MMS-Met_LON", "MMS-Met_Lon",
              "MMS-MetData_LON", "MMS-MetData_Lon", "LON", "Lon", "longitude"]
     ) or next((c for c in df.columns if "lon" in c.lower()), None)
 
     alt_col = _find_col(
-        df, ["MMS-Met_ALT", "MMS-Met_Alt",
+        df, ["Alt_m", "MMS-Met_ALT", "MMS-Met_Alt",
              "MMS-MetData_ALT", "MMS-MetData_Alt", "ALT", "Alt", "ALTITUDE"]
     ) or next((c for c in df.columns if "alt" in c.lower()), None)
 

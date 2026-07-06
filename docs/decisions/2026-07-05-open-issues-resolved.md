@@ -74,14 +74,48 @@ future masking decision.
 |---|---|
 | CRYSTAL-FACE-NASA | **Fixed.** Loader pointed at `SP/` (SPP-100 particle-probe data, not navigation — always failed silently). Added `load_np_file()` reading `NP/` (WB-57F navigational data, barometric+GPS altitude, all 19 flights). Coverage: 0% → 100.0%. |
 | CRYSTAL-FACE-UND | **Fixed.** `ND_NAV/*NAV.CIT` (Applanix POS altitude/lat/lon) was never read. Now merged the same way `MET.CIT` already is. Coverage: 0% → 100.0%. |
-| MACPEX | **Confirmed dead end**, not a parser bug. Instrument headers reference `MMS-FlightPath_*.ict`/`MMS-GpsTurb_*.ict`/`MMS-Attitude_*.ict` for position, but none of those files exist anywhere in `data/raw/MACPEX/` — never downloaded. One instrument header (HWV) claims "Lat, Lon, Alt included in the data records," but the actual columns are only `Time_UTC, H2O, +Unc, -Unc` — boilerplate text, verified false. Double-checked directly against raw files per user request. Recovery requires re-acquiring files from NASA ESPO. |
-| MIDCIX | **Confirmed dead end.** Raw archive has exactly 7 `JW*.WB57` files with no lat/lon/alt columns and no other files present. Same as MACPEX. |
+| MACPEX | **Fixed** (revised — see below). |
+| MIDCIX | **Fixed** (revised — see below). |
 
-Per user decision, no synthetic ICAO-inverse altitude was added for
-MACPEX/MIDCIX — `Alt_m` stays NaN, documented as an accepted limitation
-(same treatment as ARM's qv NaN).
+### Revision: MACPEX/MIDCIX nav data does exist at ESPO
 
-**Overall Alt_m coverage: 79.2% → 88.5%.**
+The initial pass (above) declared MACPEX/MIDCIX altitude an accepted
+limitation, since the position files referenced by other instrument
+headers weren't present in the local `data/raw/` holdings. The user
+pointed to the live ESPO archives
+(`https://espoarchive.nasa.gov/archive/browse/{macpex,midcix}/WB57`) and
+asked to re-check — the referenced files exist there and are public,
+unauthenticated downloads. Downloaded and wired in:
+
+- **MACPEX**: `MMS-FlightPath_WB57_*.ict` (16 files) → `data/raw/MACPEX/MMS-FlightPath/`.
+  Standard ICARTT-1001, comma-delimited, columns `P_ALT, LAT, LONG, TAS`
+  with scale factors `1.0, 0.001, 0.001, 0.1`. MACPEX's parser
+  (`parsers/macpex.py`) already had a generic multi-instrument ICARTT
+  reader (`_parse_ict_file` + `_load_and_merge`) that picks up any new
+  instrument subfolder automatically; added the missing scale-factor
+  application for LAT/LONG (`Lat_deg`/`Lon_deg`, ×0.001) and P_ALT→`Alt_m`
+  (×1.0, already metres), plus the three MMS-FlightPath-specific
+  missing-value codes (`-99999, -999999, -999`) to `MACPEX_MISSING_FLAGS`.
+  Coverage: 0% → **100.0%**.
+- **MIDCIX**: `FP*.WB57` (9 files) → `data/raw/MidCix/FP/`. Exact same
+  column layout already handled by `load_mms_file()` in
+  `parsers/crystal_face_nasa.py`, reused directly. `load_midcix_file` now
+  merges the corresponding `FP<date>.WB57` file via `merge_asof` on
+  `Timestamp` (nearest, 2 s tolerance). Coverage: 0% → **96.7%** (gaps
+  where the FP file's flight-time coverage is narrower than JW's).
+
+**Bug found and fixed along the way:** `load_mms_file()` had a pre-existing
+off-by-one indexing bug — `scales`/`missing_vals` cover only the 4
+*dependent* variables (`P_ALT, LAT, LONG, TAS`), but the code indexed them
+against the 5-element `columns` list (which includes the independent `UT`
+variable at index 0), shifting every scale factor by one column. This
+silently scaled `P_ALT` by LAT's factor and `LONG` by TAS's factor. It was
+never caught before because CRYSTAL-FACE-NASA's `SP/` files (the only
+prior caller) always failed at the header-matching step before reaching
+this code — this MIDCIX work was the first time `load_mms_file()` actually
+executed end-to-end. Fixed by indexing against `columns[1:]` instead.
+
+**Overall Alt_m coverage: 79.2% → 98.2%.**
 
 ## Final state (2026-07-05, post-fix)
 
@@ -91,8 +125,9 @@ MACPEX/MIDCIX — `Alt_m` stays NaN, documented as an accepted limitation
 | Dataset-wide qv max | 279 g/kg (ESCAPE, misattributed to IPHEX) | 100.8 g/kg |
 | CRYSTAL-FACE-NASA Alt_m | 0% | 100.0% |
 | CRYSTAL-FACE-UND Alt_m | 0% | 100.0% |
-| MACPEX / MIDCIX Alt_m | 0% | 0% (confirmed limitation, documented) |
-| Overall Alt_m coverage | 79.2% | 88.5% |
+| MACPEX Alt_m | 0% | 100.0% |
+| MIDCIX Alt_m | 0% | 96.7% |
+| Overall Alt_m coverage | 79.2% | 98.2% |
 
 Verified via `python main.py --all`, `python scripts/qa_checks.py` (all 9
 checks), and `python scripts/full_diagnostic.py`.

@@ -99,14 +99,22 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     if df.empty:
         return df
     
+    # scales/missing_vals cover only the dependent variables (P_ALT, LAT,
+    # LONG, TAS) per the ICARTT header — columns[0] ("UT") is the
+    # independent variable and has no entry in either list. Index against
+    # columns[1:], not columns, or every dependent variable gets scaled by
+    # the value meant for its predecessor (confirmed bug: previously this
+    # silently scaled P_ALT by LAT's factor and LAT by LONG's factor).
+    dep_columns = columns[1:]
+
     # Replace missing values with NaN BEFORE applying scale factors
     # (missing values are in raw data units before scaling)
-    for i, col in enumerate(columns):
+    for i, col in enumerate(dep_columns):
         if i < len(missing_vals):
             df.loc[df[col] == missing_vals[i], col] = np.nan
-    
+
     # Apply scale factors AFTER removing missing values
-    for i, col in enumerate(columns):
+    for i, col in enumerate(dep_columns):
         if i < len(scales):
             df[col] = df[col] * scales[i]
     
