@@ -19,6 +19,7 @@ from .utils import (
     es_ice_hPa,
     qv_from_e_P,
     sw_from_si,
+    round_timestamp_to_second,
     COMMON_NA_VALUES,
 )
 from .crystal_face_nasa import load_mms_file
@@ -70,7 +71,8 @@ def load_midcix_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["Timestamp"] = df[ut_col].apply(
         lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
     )
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
+    df["Timestamp"] = round_timestamp_to_second(df["Timestamp"])
+    df = df.dropna(subset=["Timestamp"]).drop_duplicates(subset=["Timestamp"], keep="first")
 
     # Calculate Si from RH — JPL Laser Hygrometer (JLH)
     if "RH" in df.columns:
@@ -94,13 +96,17 @@ def load_midcix_file(filepath: Union[str, Path]) -> pd.DataFrame:
     if nav_path is not None:
         try:
             nav_df = load_mms_file(nav_path)
-            df = pd.merge_asof(
-                df.sort_values("Timestamp"),
-                nav_df[["Timestamp", "Lat", "Lon", "Alt_m"]].sort_values("Timestamp"),
+            nav_df = nav_df.dropna(subset=["Timestamp"]).drop_duplicates(subset=["Timestamp"], keep="first")
+            # Exact-second outer merge -- no merge_asof tolerance. A second
+            # reported by only one of JW/FP becomes a row with that source's
+            # columns filled and the other NaN, consistent with the rest of
+            # the pipeline's no-fabricated-precision policy.
+            df = pd.merge(
+                df,
+                nav_df[["Timestamp", "Lat", "Lon", "Alt_m"]],
                 on="Timestamp",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=2),
-            )
+                how="outer",
+            ).sort_values("Timestamp").reset_index(drop=True)
         except Exception as e:
             print(f"  Warning: Could not merge MIDCIX nav file {nav_path.name}: {e}")
 

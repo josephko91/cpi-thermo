@@ -19,6 +19,92 @@ engineering logs.
 
 ---
 
+## 2026-07-07 — L1 fixed to one row per CPI image (was collapsing ~30 images/second into 1)
+
+**See:** `scripts/build_data_tiers.py::build_l1()`.
+**Campaigns:** 15 (no change), but `combined_env_data_L1.parquet` /
+`_L2.parquet` grow substantially.
+
+`build_l1()` was a semi-join (filtered L0 rows to seconds present in a
+campaign's CPI-image set) rather than a proper one-to-many merge. Since
+CPI images average ~30 per matched second (up to 644 in one second),
+every image beyond the first at a given second was silently discarded.
+Rewrote it as a per-campaign inner merge -- one row per CPI image, env
+columns duplicated across images sharing a second, plus a new
+`cpi_filename` column so every row traces back to its source image.
+
+Surfaced a related issue while fixing this: L0 is not always unique per
+`(Campaign, Timestamp)` once floored to the second -- ARM is a genuine
+native 4Hz stream (0.25s intervals), so naively joining against its
+floored timestamp fanned each image out across up to 4 sub-second L0
+rows. Fixed by deduping L0 to one row per floored second (keep first)
+*inside `build_l1()` only* -- L0 itself and its native sub-second
+resolution are untouched.
+
+| Campaign | n_L1 before -> after |
+|---|---|
+| ARM | 15,452 -> 230,029 |
+| CRYSTAL-FACE-NASA | 2,716 -> 78,151 |
+| CRYSTAL-FACE-UND | 28,609 -> 1,608,674 |
+| MIDCIX | 5,200 -> 90,667 |
+| MPACE | 5,806 -> 35,997 |
+| AIRS-II | 4,709 -> 92,168 |
+| ICE-L | 8,407 -> 46,203 |
+| ISDAC | 6,986 -> 400,805 |
+| MACPEX | 486 -> 80,240 |
+| MC3E | 15,586 -> 173,766 |
+| ATTREX | 1,000 -> 122,050 |
+| IPHEX | 17,406 -> 38,697 |
+| **TOTAL** | **112,363 -> 2,997,447** |
+
+L2 grows correspondingly (72,809 -> 1,828,818). 93.66% of all 3,200,351
+CPI images across the 12 campaigns with any CPI archive coverage now have
+a matching L1 row (the remaining ~6.3% have no L0 second at all -- no
+instrument reported anything at that exact time).
+
+---
+
+## 2026-07-07 — Exact-second merge rewrite; L0/L1/L2 data tiers introduced
+
+**See:** `docs/decisions/2026-07-07-exact-second-merge-rewrite.md`,
+GitHub issues #10, #12.
+**Campaigns:** 15 (no change), but row counts change substantially for 6
+of them, and `data/out/combined_env_data_L1.parquet` /
+`combined_env_data_L2.parquet` are new outputs.
+
+Replaced every `pd.merge_asof(direction="nearest", tolerance=...)` call in
+the pipeline with an exact-second outer-join (round every instrument's own
+timestamp to the nearest second, then join by exact second; no reading at
+that second means NaN, never a nearest-neighbor value fabricated from a
+different second). Row counts grow (union-of-all-instrument-timestamps
+row grid, vs. previously being anchored to one primary instrument) while
+coverage % drops (previously-fabricated values via wide merge tolerances,
+up to 60s in one case, no longer counted):
+
+| Campaign | Rows before -> after | Tair_C valid before -> after | Si valid before -> after |
+|---|---|---|---|
+| CRYSTAL-FACE-NASA | 154,815 -> 323,310 | 100.0% -> 50.3% | 100.0% -> 50.3% |
+| MIDCIX | 118,105 -> 181,459 | 64.3% -> 41.8% | 64.3% -> 41.8% |
+| MACPEX | 279,073 -> 307,780 | 100.0% -> 90.7% | 69.9% -> 63.4% |
+| ATTREX | 581,370 -> 1,316,204 | 99.7% -> 44.0% | 86.3% -> 37.6% |
+| POSIDON | 190,418 -> 351,508 | 97.9% -> 97.2% | 96.0% -> 52.0% |
+| CRYSTAL-FACE-UND | 200,740 -> 200,864 | 98.4% -> 98.3% | 66.2% -> 66.2% |
+
+All other campaigns (ARM, AIRS-II, ESCAPE, ICE-L, IPHEX, ISDAC, MC3E,
+MPACE, OLYMPEX) show exactly zero diff. Si mean/std for actually-computed
+values are unchanged everywhere -- confirms this was a coverage-honesty
+fix, not a correctness fix to the Si/qv computation itself.
+
+Two genuine pre-existing bugs (not previously known) surfaced as a side
+effect of the anchor -> union-join change: ATTREX's entire 2011 deployment
+(pre-MMS, no MMS files) was silently dropped by the old anchor-based
+merge; POSIDON was similarly restricted to its alphabetically-first
+instrument's date range. Both are now recovered. CRYSTAL-FACE-NASA's
+CPI-fusion Tair_C/Si coverage (issue #9) changes from the previously
+reported ~44% to a real, honest 26.2%.
+
+---
+
 ## 2026-07-06 — Systematic QA/QC flag investigation (7 fixes, ARM/AIRS-II/CRYSTAL-FACE-NASA corrected)
 
 **Commits:** `ee1a933`, `c36bd12`, `18f19e3`, `fad5479`, `60a92b5`, `6853008`

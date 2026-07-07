@@ -26,19 +26,8 @@ from .utils import (
     qv_from_ppmv,
     qv_from_e_P,
     sw_from_si,
+    round_timestamp_to_second as _round_timestamp_to_second,
 )
-
-
-def _round_timestamp_to_second(series: pd.Series) -> pd.Series:
-    # .dt.round("s") uses round-half-to-even ("banker's rounding"): X.5-second
-    # values round toward the nearest EVEN second, not consistently up. Some
-    # source files (e.g. JW20020719.WB57) sample at a fixed .5s offset, so two
-    # adjacent, physically distinct 1 Hz samples (e.g. :03.5 and :04.5) both
-    # round to :04 and collide into a spurious duplicate-timestamp row. floor()
-    # truncates consistently in one direction, preserving the original 1s
-    # spacing with no collisions (functionally equivalent given the ±1s CPI
-    # fusion match tolerance used throughout this pipeline).
-    return pd.to_datetime(series, utc=True, errors="coerce").dt.floor("s")
 
 
 def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -601,7 +590,12 @@ def load_crystal_face_nasa(
                 except Exception as e:
                     print(f"Warning: Could not load geolocation file {f.name}: {e}")
             if mms_dfs:
-                mms_geo = pd.concat(mms_dfs, ignore_index=True)
+                mms_geo = (
+                    pd.concat(mms_dfs, ignore_index=True)
+                    .dropna(subset=["Timestamp"])
+                    .sort_values("Timestamp")
+                    .drop_duplicates(subset=["Timestamp"], keep="first")
+                )
 
     # -----------------------------------------------------------------------
     # Load MM meteorology (P and T for HW Si calculation)
@@ -617,7 +611,12 @@ def load_crystal_face_nasa(
                 except Exception as e:
                     print(f"Warning: Could not load MM file {f.name}: {e}")
             if mm_dfs:
-                mm_met = pd.concat(mm_dfs, ignore_index=True).dropna(subset=["Timestamp"]).sort_values("Timestamp")
+                mm_met = (
+                    pd.concat(mm_dfs, ignore_index=True)
+                    .dropna(subset=["Timestamp"])
+                    .sort_values("Timestamp")
+                    .drop_duplicates(subset=["Timestamp"], keep="first")
+                )
                 print(f"  MM met: {len(mm_met):,} records across "
                       f"{mm_met['Timestamp'].dt.date.nunique()} dates")
 
@@ -635,40 +634,46 @@ def load_crystal_face_nasa(
                 except Exception as e:
                     print(f"Warning: Could not load NM file {f.name}: {e}")
             if nm_dfs:
-                nm_met = pd.concat(nm_dfs, ignore_index=True).dropna(subset=["Timestamp"]).sort_values("Timestamp")
+                nm_met = (
+                    pd.concat(nm_dfs, ignore_index=True)
+                    .dropna(subset=["Timestamp"])
+                    .sort_values("Timestamp")
+                    .drop_duplicates(subset=["Timestamp"], keep="first")
+                )
                 print(f"  NM met: {len(nm_met):,} records across "
                       f"{nm_met['Timestamp'].dt.date.nunique()} dates")
 
-    # Build combined T/P: MM primary, NM fills gaps
+    # Build combined T/P: MM primary, NM fills gaps -- exact-second outer
+    # merge, no merge_asof tolerance. A second present in both sources keeps
+    # MM's value (higher-quality); a second present in only one source keeps
+    # that source's own value; a second present in neither stays absent (no
+    # row) rather than being fabricated via nearest-match.
     tp_met = mm_met
     if nm_met is not None:
         if tp_met is None:
-            tp_met = nm_met
+            tp_met = nm_met[["Timestamp", "P_hPa", "T_K"]]
         else:
-            # Merge NM into MM: fill MM NaN T/P from NM, and append NM rows
-            # for timestamps absent from MM (e.g. Jul 29 first 3.5 h).
-            tp_combined = pd.merge_asof(
-                nm_met.sort_values("Timestamp"),
+            tp_combined = pd.merge(
                 mm_met[["Timestamp", "P_hPa", "T_K"]].rename(
                     columns={"P_hPa": "P_hPa_mm", "T_K": "T_K_mm"}
-                ).sort_values("Timestamp"),
+                ),
+                nm_met[["Timestamp", "P_hPa", "T_K"]].rename(
+                    columns={"P_hPa": "P_hPa_nm", "T_K": "T_K_nm"}
+                ),
                 on="Timestamp",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=5),
+                how="outer",
             )
-            # Use MM where available, NM otherwise
             tp_combined["P_hPa"] = tp_combined["P_hPa_mm"].where(
-                tp_combined["P_hPa_mm"].notna(), tp_combined["P_hPa"]
+                tp_combined["P_hPa_mm"].notna(), tp_combined["P_hPa_nm"]
             )
             tp_combined["T_K"] = tp_combined["T_K_mm"].where(
-                tp_combined["T_K_mm"].notna(), tp_combined["T_K"]
+                tp_combined["T_K_mm"].notna(), tp_combined["T_K_nm"]
             )
-            tp_combined = tp_combined[["Timestamp", "P_hPa", "T_K"]].dropna(subset=["Timestamp"])
-            # Also keep original MM rows (higher-quality) for complete coverage
-            tp_met = pd.concat(
-                [mm_met[["Timestamp", "P_hPa", "T_K"]], tp_combined],
-                ignore_index=True,
-            ).sort_values("Timestamp").drop_duplicates(subset=["Timestamp"], keep="first")
+            tp_met = (
+                tp_combined[["Timestamp", "P_hPa", "T_K"]]
+                .dropna(subset=["Timestamp"])
+                .sort_values("Timestamp")
+            )
 
     # -----------------------------------------------------------------------
     # Load HW water vapour and compute Si via HW + T/P met (MM primary, NM fallback)
@@ -684,14 +689,20 @@ def load_crystal_face_nasa(
                 except Exception as e:
                     print(f"Warning: Could not load HW file {f.name}: {e}")
             if hw_dfs:
-                hw_all = pd.concat(hw_dfs, ignore_index=True).sort_values("Timestamp")
-                # Merge HW ppmv with T/P met (nearest within 30 s — HW is 10 s resolution)
-                hw_mm = pd.merge_asof(
+                hw_all = (
+                    pd.concat(hw_dfs, ignore_index=True)
+                    .dropna(subset=["Timestamp"])
+                    .sort_values("Timestamp")
+                    .drop_duplicates(subset=["Timestamp"], keep="first")
+                )
+                # Exact-second merge of HW ppmv with T/P met -- HW is ~10 s
+                # native cadence, so most HW rows will have no exact-second
+                # T/P match (NaN) rather than reusing a stale nearby value.
+                hw_mm = pd.merge(
                     hw_all,
-                    tp_met[["Timestamp", "P_hPa", "T_K"]].sort_values("Timestamp"),
+                    tp_met[["Timestamp", "P_hPa", "T_K"]],
                     on="Timestamp",
-                    direction="nearest",
-                    tolerance=pd.Timedelta(seconds=30),
+                    how="left",
                 )
                 valid = hw_mm["H2O_ppmv"].notna() & hw_mm["T_K"].notna() & hw_mm["P_hPa"].notna()
                 hw_mm["Si_HW"] = np.nan
@@ -727,14 +738,20 @@ def load_crystal_face_nasa(
                 except Exception as e:
                     print(f"Warning: Could not load ALIAS file {f.name}: {e}")
             if alias_dfs:
-                alias_all = pd.concat(alias_dfs, ignore_index=True).sort_values("Timestamp")
-                # Merge ALIAS ppmv with T/P met (nearest within 5 s — ALIAS is ~2 s resolution)
-                alias_mm = pd.merge_asof(
+                alias_all = (
+                    pd.concat(alias_dfs, ignore_index=True)
+                    .dropna(subset=["Timestamp"])
+                    .sort_values("Timestamp")
+                    .drop_duplicates(subset=["Timestamp"], keep="first")
+                )
+                # Exact-second merge of ALIAS ppmv with T/P met -- ALIAS is
+                # ~2 s native cadence, so most rows will have no exact-second
+                # T/P match (NaN) rather than reusing a stale nearby value.
+                alias_mm = pd.merge(
                     alias_all,
-                    tp_met[["Timestamp", "P_hPa", "T_K"]].sort_values("Timestamp"),
+                    tp_met[["Timestamp", "P_hPa", "T_K"]],
                     on="Timestamp",
-                    direction="nearest",
-                    tolerance=pd.Timedelta(seconds=5),
+                    how="left",
                 )
                 valid = alias_mm["H2O_ppmv"].notna() & alias_mm["T_K"].notna() & alias_mm["P_hPa"].notna()
                 alias_mm["Si_ALIAS"] = np.nan
@@ -763,246 +780,65 @@ def load_crystal_face_nasa(
         except Exception as e:
             print(f"Warning: Could not load {f.name}: {e}")
 
-    combined = pd.concat(dfs, ignore_index=True)
+    combined = (
+        pd.concat(dfs, ignore_index=True)
+        .dropna(subset=["Timestamp"])
+        .sort_values("Timestamp")
+        .drop_duplicates(subset=["Timestamp"], keep="first")
+    )
 
-    # Merge with geolocation on nearest timestamp
+    # -----------------------------------------------------------------------
+    # Build the row grid as the union of every instrument's own timestamps
+    # (JLH, geolocation, HW-derived Si, ALIAS-derived Si, MM/NM P_hPa) via
+    # exact-second outer merges -- no merge_asof tolerance anywhere. A second
+    # reported by only one source becomes a row with that source's columns
+    # filled and everything else NaN; there is no nearest-neighbor reuse of
+    # a stale value from a different second.
     if mms_geo is not None and not mms_geo.empty:
-        combined = pd.merge_asof(
-            combined.sort_values("Timestamp"),
-            mms_geo.sort_values("Timestamp"),
-            on="Timestamp",
-            direction="nearest",
-            tolerance=pd.Timedelta(seconds=10),
-        )
+        combined = pd.merge(combined, mms_geo, on="Timestamp", how="outer")
 
-    # -----------------------------------------------------------------------
-    # Build HW-derived rows for timestamps not covered by JLH
-    # and append them so Si coverage extends into JLH gaps and Jul 29.
-    # -----------------------------------------------------------------------
     if hw_si is not None and not hw_si.empty:
-        # Rows in HW that have no nearby JLH timestamp (>10 s gap)
-        jlh_ts = combined["Timestamp"].dropna().sort_values()
-        hw_si_sorted = hw_si.sort_values("Timestamp")
-        hw_check = pd.merge_asof(
-            hw_si_sorted,
-            pd.DataFrame({"Timestamp": jlh_ts}),
+        combined = pd.merge(
+            combined,
+            hw_si[["Timestamp", "Si_HW", "T_C_HW", "qv_hw"]],
             on="Timestamp",
-            direction="nearest",
-            tolerance=pd.Timedelta(seconds=10),
-            suffixes=("", "_jlh"),
+            how="outer",
         )
-        # Keep HW rows where JLH had no nearby match (i.e. JLH gap or missing date)
-        hw_gap_rows = hw_check[hw_check["Timestamp"].isna() == False].copy()
-        # Actually we want rows where JLH timestamp is absent after merge; since
-        # merge_asof always fills right key, check using a different approach:
-        # just fill all JLH-Si NaN using HW after final merge below.
-        # Instead, build HW-only frame for dates absent from JLH entirely.
-        jlh_dates = set(combined["Timestamp"].dropna().dt.date.unique())
-        hw_extra = hw_si[~hw_si["Timestamp"].dt.date.isin(jlh_dates)].copy()
-        if not hw_extra.empty:
-            # These are dates (e.g. Jul 29) with no JLH data at all
-            hw_extra_std = pd.DataFrame({
-                "Timestamp": hw_extra["Timestamp"],
-                "Si_HW": hw_extra["Si_HW"],
-                "T_C": hw_extra["T_C_HW"],
-                "qv_hw": hw_extra.get("qv_hw", np.nan),
-                "source_file": "HW-fallback",
-            })
-            if mms_geo is not None and not mms_geo.empty:
-                hw_extra_std = pd.merge_asof(
-                    hw_extra_std.sort_values("Timestamp"),
-                    mms_geo.sort_values("Timestamp"),
-                    on="Timestamp",
-                    direction="nearest",
-                    tolerance=pd.Timedelta(seconds=10),
-                )
-            combined = pd.concat([combined, hw_extra_std], ignore_index=True, sort=False)
-            print(f"  HW fallback: added {len(hw_extra_std):,} rows for "
-                  f"{hw_extra['Timestamp'].dt.date.nunique()} JLH-absent dates")
+    else:
+        combined["Si_HW"] = np.nan
+        combined["T_C_HW"] = np.nan
+        combined["qv_hw"] = np.nan
 
-        # Add HW rows for time gaps within shared dates.
-        # JLH gaps are missing rows (not NaN), so find HW timestamps that have
-        # no nearby JLH timestamp and add them as new rows.
-        combined_sorted = combined.sort_values("Timestamp")
-        jlh_ts_sorted = combined_sorted["Timestamp"].dropna().sort_values()
-        hw_all_shared = hw_si[hw_si["Timestamp"].dt.date.isin(jlh_dates)].copy()
-        if not hw_all_shared.empty:
-            hw_all_shared_sorted = hw_all_shared.sort_values("Timestamp")
-            jlh_ts_sorted_ns = jlh_ts_sorted.dt.as_unit("ns")
-            hw_all_shared_ns = hw_all_shared_sorted.copy()
-            hw_all_shared_ns["Timestamp"] = hw_all_shared_ns["Timestamp"].dt.as_unit("ns")
-
-            check = pd.merge_asof(
-                hw_all_shared_ns,
-                pd.DataFrame({"JLH_ts": jlh_ts_sorted_ns}),
-                left_on="Timestamp",
-                right_on="JLH_ts",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=10),
-            )
-            # HW rows with no nearby JLH timestamp = inside a JLH gap
-            hw_in_gaps = check[check["JLH_ts"].isna()].drop(columns=["JLH_ts"])
-            # Restore original timestamp resolution
-            hw_in_gaps = hw_in_gaps.copy()
-            hw_in_gaps["Timestamp"] = hw_in_gaps["Timestamp"].dt.as_unit("us")
-            if not hw_in_gaps.empty:
-                hw_gap_std = pd.DataFrame({
-                    "Timestamp": hw_in_gaps["Timestamp"],
-                    "Si_HW": hw_in_gaps["Si_HW"],
-                    "T_C": hw_in_gaps["T_C_HW"],
-                    "qv_hw": hw_in_gaps.get("qv_hw", np.nan),
-                    "source_file": "HW-gap-fill",
-                })
-                if mms_geo is not None and not mms_geo.empty:
-                    hw_gap_std = pd.merge_asof(
-                        hw_gap_std.sort_values("Timestamp"),
-                        mms_geo.sort_values("Timestamp"),
-                        on="Timestamp",
-                        direction="nearest",
-                        tolerance=pd.Timedelta(seconds=10),
-                    )
-                combined = pd.concat([combined, hw_gap_std], ignore_index=True, sort=False)
-                print(f"  HW gap-fill: added {len(hw_gap_std):,} rows for JLH gaps on shared dates")
-
-    # -----------------------------------------------------------------------
-    # Build ALIAS-derived rows for timestamps not covered by JLH or HW
-    # (third Si fallback -- checked against combined's coverage *after* the
-    # HW extra-date/gap-fill rows above, so ALIAS only fills what's left).
-    # -----------------------------------------------------------------------
     if alias_si is not None and not alias_si.empty:
-        covered_dates = set(combined["Timestamp"].dropna().dt.date.unique())
-        alias_extra = alias_si[~alias_si["Timestamp"].dt.date.isin(covered_dates)].copy()
-        if not alias_extra.empty:
-            alias_extra_std = pd.DataFrame({
-                "Timestamp": alias_extra["Timestamp"],
-                "Si_ALIAS": alias_extra["Si_ALIAS"],
-                "T_C": alias_extra["T_C_ALIAS"],
-                "qv_alias": alias_extra.get("qv_alias", np.nan),
-                "source_file": "ALIAS-fallback",
-            })
-            if mms_geo is not None and not mms_geo.empty:
-                alias_extra_std = pd.merge_asof(
-                    alias_extra_std.sort_values("Timestamp"),
-                    mms_geo.sort_values("Timestamp"),
-                    on="Timestamp",
-                    direction="nearest",
-                    tolerance=pd.Timedelta(seconds=10),
-                )
-            combined = pd.concat([combined, alias_extra_std], ignore_index=True, sort=False)
-            print(f"  ALIAS fallback: added {len(alias_extra_std):,} rows for "
-                  f"{alias_extra['Timestamp'].dt.date.nunique()} JLH/HW-absent dates")
-
-        combined_sorted = combined.sort_values("Timestamp")
-        covered_ts_sorted = combined_sorted["Timestamp"].dropna().sort_values()
-        alias_all_shared = alias_si[alias_si["Timestamp"].dt.date.isin(covered_dates)].copy()
-        if not alias_all_shared.empty:
-            covered_ts_sorted_ns = covered_ts_sorted.dt.as_unit("ns")
-            alias_all_shared_ns = alias_all_shared.sort_values("Timestamp").copy()
-            alias_all_shared_ns["Timestamp"] = alias_all_shared_ns["Timestamp"].dt.as_unit("ns")
-
-            check = pd.merge_asof(
-                alias_all_shared_ns,
-                pd.DataFrame({"covered_ts": covered_ts_sorted_ns}),
-                left_on="Timestamp",
-                right_on="covered_ts",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=5),
-            )
-            # ALIAS rows with no nearby JLH/HW timestamp = inside a remaining gap
-            alias_in_gaps = check[check["covered_ts"].isna()].drop(columns=["covered_ts"])
-            alias_in_gaps = alias_in_gaps.copy()
-            alias_in_gaps["Timestamp"] = alias_in_gaps["Timestamp"].dt.as_unit("us")
-            if not alias_in_gaps.empty:
-                alias_gap_std = pd.DataFrame({
-                    "Timestamp": alias_in_gaps["Timestamp"],
-                    "Si_ALIAS": alias_in_gaps["Si_ALIAS"],
-                    "T_C": alias_in_gaps["T_C_ALIAS"],
-                    "qv_alias": alias_in_gaps.get("qv_alias", np.nan),
-                    "source_file": "ALIAS-gap-fill",
-                })
-                if mms_geo is not None and not mms_geo.empty:
-                    alias_gap_std = pd.merge_asof(
-                        alias_gap_std.sort_values("Timestamp"),
-                        mms_geo.sort_values("Timestamp"),
-                        on="Timestamp",
-                        direction="nearest",
-                        tolerance=pd.Timedelta(seconds=10),
-                    )
-                combined = pd.concat([combined, alias_gap_std], ignore_index=True, sort=False)
-                print(f"  ALIAS gap-fill: added {len(alias_gap_std):,} rows for JLH/HW gaps on shared dates")
-
-    combined["Timestamp"] = _round_timestamp_to_second(combined["Timestamp"])
-
-    # Merge Si_HW (and qv_hw) into JLH rows that don't already have it
-    hw_merge_cols = ["Timestamp", "Si_HW", "qv_hw"]
-    if hw_si is not None and not hw_si.empty:
-        available_hw_cols = [c for c in hw_merge_cols if c in hw_si.columns]
-        if "Si_HW" not in combined.columns:
-            combined = pd.merge_asof(
-                combined.sort_values("Timestamp"),
-                hw_si[available_hw_cols].sort_values("Timestamp"),
-                on="Timestamp",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=30),
-            )
-        else:
-            drop_cols = [c for c in available_hw_cols if c != "Timestamp" and c in combined.columns]
-            tmp = pd.merge_asof(
-                combined.sort_values("Timestamp").drop(columns=drop_cols),
-                hw_si[available_hw_cols].sort_values("Timestamp"),
-                on="Timestamp",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=30),
-            )
-            combined = tmp
-
-    # Merge Si_ALIAS (and qv_alias) into rows that don't already have it
-    alias_merge_cols = ["Timestamp", "Si_ALIAS", "qv_alias"]
-    if alias_si is not None and not alias_si.empty:
-        available_alias_cols = [c for c in alias_merge_cols if c in alias_si.columns]
-        if "Si_ALIAS" not in combined.columns:
-            combined = pd.merge_asof(
-                combined.sort_values("Timestamp"),
-                alias_si[available_alias_cols].sort_values("Timestamp"),
-                on="Timestamp",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=5),
-            )
-        else:
-            drop_cols = [c for c in available_alias_cols if c != "Timestamp" and c in combined.columns]
-            tmp = pd.merge_asof(
-                combined.sort_values("Timestamp").drop(columns=drop_cols),
-                alias_si[available_alias_cols].sort_values("Timestamp"),
-                on="Timestamp",
-                direction="nearest",
-                tolerance=pd.Timedelta(seconds=5),
-            )
-            combined = tmp
-
-    # Merge P_hPa from met data into combined for qv_jlh computation
-    if tp_met is not None:
-        p_data = tp_met[["Timestamp", "P_hPa"]].dropna(subset=["P_hPa"]).sort_values("Timestamp")
-        if not p_data.empty:
-            if "P_hPa" not in combined.columns:
-                combined = pd.merge_asof(
-                    combined.sort_values("Timestamp"),
-                    p_data,
-                    on="Timestamp",
-                    direction="nearest",
-                    tolerance=pd.Timedelta(seconds=60),
-                )
-            else:
-                tmp_p = pd.merge_asof(
-                    combined.sort_values("Timestamp").drop(columns=["P_hPa"]),
-                    p_data,
-                    on="Timestamp",
-                    direction="nearest",
-                    tolerance=pd.Timedelta(seconds=60),
-                )
-                combined = tmp_p
-
-    if "Si_ALIAS" not in combined.columns:
+        combined = pd.merge(
+            combined,
+            alias_si[["Timestamp", "Si_ALIAS", "T_C_ALIAS", "qv_alias"]],
+            on="Timestamp",
+            how="outer",
+        )
+    else:
         combined["Si_ALIAS"] = np.nan
+        combined["T_C_ALIAS"] = np.nan
+        combined["qv_alias"] = np.nan
+
+    if tp_met is not None:
+        p_data = tp_met[["Timestamp", "P_hPa"]].dropna(subset=["P_hPa"])
+        combined = pd.merge(combined, p_data, on="Timestamp", how="outer")
+    else:
+        combined["P_hPa"] = np.nan
+
+    combined = combined.sort_values("Timestamp").reset_index(drop=True)
+    combined["source_file"] = combined.get("source_file", pd.Series(np.nan, index=combined.index)).fillna("")
+
+    # T_C = JLH's own reading (from its embedded MMS column) where present,
+    # else HW-derived, else ALIAS-derived -- same priority as Si below. Only
+    # JLH-backed rows carry a JLH "T_C" value going in; HW/ALIAS/geolocation-
+    # only rows (introduced by the outer merges above) start with T_C == NaN.
+    if "T_C" not in combined.columns:
+        combined["T_C"] = np.nan
+    for fallback_col in ("T_C_HW", "T_C_ALIAS"):
+        mask = combined["T_C"].isna() & combined[fallback_col].notna()
+        combined.loc[mask, "T_C"] = combined.loc[mask, fallback_col]
 
     # Si = best from h2o_ranking: JLH first, then HW, then ALIAS
     combined["Si"] = np.nan
