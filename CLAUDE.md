@@ -117,6 +117,7 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 | `scripts/qa_checks.py` | `logs/qaqc/<ts>/` (00–09 CSVs) | `figs/qaqc/<ts>/` |
 | `scripts/diagnose_cpi_fusion.py` | `logs/cpi_fusion/<ts>/` | `figs/cpi_fusion/<ts>/` |
 | `scripts/build_data_tiers.py` | `logs/build_data_tiers/<ts>/` (tier_summary.csv) | — |
+| `scripts/diagnose_data_tiers.py` | `logs/diagnose_data_tiers/<ts>/` (row counts + variable coverage CSVs) | `figs/diagnose_data_tiers/<ts>/` (funnel + coverage heatmap) |
 | `scripts/diagnose_campaign_missingness.py` | `logs/campaign_missingness/<ts>/` | — |
 | `scripts/summarize_parser_recommendations.py` | reads `logs/campaign_missingness/latest/` by default | — |
 | `scripts/full_diagnostic.py` | — (console-only: variable stats, availability table, known-issue checks) | — |
