@@ -19,6 +19,47 @@ engineering logs.
 
 ---
 
+## 2026-07-07 — Exact-second merge rewrite; L0/L1/L2 data tiers introduced
+
+**See:** `docs/decisions/2026-07-07-exact-second-merge-rewrite.md`,
+GitHub issues #10, #12.
+**Campaigns:** 15 (no change), but row counts change substantially for 6
+of them, and `data/out/combined_env_data_L1.parquet` /
+`combined_env_data_L2.parquet` are new outputs.
+
+Replaced every `pd.merge_asof(direction="nearest", tolerance=...)` call in
+the pipeline with an exact-second outer-join (round every instrument's own
+timestamp to the nearest second, then join by exact second; no reading at
+that second means NaN, never a nearest-neighbor value fabricated from a
+different second). Row counts grow (union-of-all-instrument-timestamps
+row grid, vs. previously being anchored to one primary instrument) while
+coverage % drops (previously-fabricated values via wide merge tolerances,
+up to 60s in one case, no longer counted):
+
+| Campaign | Rows before -> after | Tair_C valid before -> after | Si valid before -> after |
+|---|---|---|---|
+| CRYSTAL-FACE-NASA | 154,815 -> 323,310 | 100.0% -> 50.3% | 100.0% -> 50.3% |
+| MIDCIX | 118,105 -> 181,459 | 64.3% -> 41.8% | 64.3% -> 41.8% |
+| MACPEX | 279,073 -> 307,780 | 100.0% -> 90.7% | 69.9% -> 63.4% |
+| ATTREX | 581,370 -> 1,316,204 | 99.7% -> 44.0% | 86.3% -> 37.6% |
+| POSIDON | 190,418 -> 351,508 | 97.9% -> 97.2% | 96.0% -> 52.0% |
+| CRYSTAL-FACE-UND | 200,740 -> 200,864 | 98.4% -> 98.3% | 66.2% -> 66.2% |
+
+All other campaigns (ARM, AIRS-II, ESCAPE, ICE-L, IPHEX, ISDAC, MC3E,
+MPACE, OLYMPEX) show exactly zero diff. Si mean/std for actually-computed
+values are unchanged everywhere -- confirms this was a coverage-honesty
+fix, not a correctness fix to the Si/qv computation itself.
+
+Two genuine pre-existing bugs (not previously known) surfaced as a side
+effect of the anchor -> union-join change: ATTREX's entire 2011 deployment
+(pre-MMS, no MMS files) was silently dropped by the old anchor-based
+merge; POSIDON was similarly restricted to its alphabetically-first
+instrument's date range. Both are now recovered. CRYSTAL-FACE-NASA's
+CPI-fusion Tair_C/Si coverage (issue #9) changes from the previously
+reported ~44% to a real, honest 26.2%.
+
+---
+
 ## 2026-07-06 — Systematic QA/QC flag investigation (7 fixes, ARM/AIRS-II/CRYSTAL-FACE-NASA corrected)
 
 **Commits:** `ee1a933`, `c36bd12`, `18f19e3`, `fad5479`, `60a92b5`, `6853008`

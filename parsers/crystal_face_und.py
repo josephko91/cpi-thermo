@@ -23,6 +23,7 @@ from .utils import (
     es_ice_hPa,
     qv_from_e_P,
     sw_from_si,
+    round_timestamp_to_second,
     COMMON_NA_VALUES,
 )
 
@@ -51,8 +52,9 @@ def _read_mis_cit_file(filepath: Path) -> pd.DataFrame:
         df["Timestamp"] = df["Time"].apply(
             lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
         )
-        df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
-    
+        df["Timestamp"] = round_timestamp_to_second(df["Timestamp"])
+        df = df.dropna(subset=["Timestamp"]).drop_duplicates(subset=["Timestamp"], keep="first")
+
     return df
 
 
@@ -80,8 +82,9 @@ def _read_met_cit_file(filepath: Path) -> pd.DataFrame:
         df["Timestamp"] = df["Time"].apply(
             lambda x: takeoff_date + timedelta(seconds=float(x)) if pd.notnull(x) else pd.NaT
         )
-        df["Timestamp"] = pd.to_datetime(df["Timestamp"], utc=True)
-    
+        df["Timestamp"] = round_timestamp_to_second(df["Timestamp"])
+        df = df.dropna(subset=["Timestamp"]).drop_duplicates(subset=["Timestamp"], keep="first")
+
     return df
 
 
@@ -124,7 +127,11 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
             c for c in ("Timestamp", "POS_Lat", "POS_Lon", "POS_Alt") if c in df_nav.columns
         ]
         if len(nav_cols_to_merge) > 1:
-            df_mis = pd.merge(df_mis, df_nav[nav_cols_to_merge], on="Timestamp", how="left")
+            # Exact-second outer merge -- no tolerance. Raw headers confirm
+            # MIS/MET/NAV are all "1 Hz Data"; outer keeps NAV-only seconds
+            # (e.g. ground/taxi position with no humidity reading yet) as
+            # their own rows instead of silently dropping them.
+            df_mis = pd.merge(df_mis, df_nav[nav_cols_to_merge], on="Timestamp", how="outer")
 
     # Find corresponding MET.CIT file.
     # When files are in instrument subdirectories (ND_MIS/ and ND_MET/), we must
@@ -166,11 +173,13 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
         met_cols_to_merge.append(pres_col_met)
 
     if len(met_cols_to_merge) > 1:
+        # Exact-second outer merge -- no tolerance, same reasoning as the
+        # NAV merge above.
         df_mis = pd.merge(
             df_mis,
             df_met[met_cols_to_merge],
             on="Timestamp",
-            how="left",
+            how="outer",
         )
 
     df_mis["Tair"] = df_mis[air_temp_col] if air_temp_col else np.nan

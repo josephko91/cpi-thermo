@@ -55,7 +55,7 @@ from typing import Dict, List, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import si_from_ppmv, qv_from_ppmv, sw_from_si
+from .utils import si_from_ppmv, qv_from_ppmv, sw_from_si, round_timestamp_to_second
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +244,7 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
         df["datetime_utc"] = flight_date + pd.to_timedelta(elapsed, unit="s")
     else:
         df["datetime_utc"] = pd.NaT
-    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").dt.as_unit("ns")
+    df["datetime_utc"] = round_timestamp_to_second(df["datetime_utc"])
 
     # --- rename data columns with instrument prefix so they survive merging ---
     prefix = instrument  # e.g. "DLH-H2O", "MMS-MetData"
@@ -266,17 +266,19 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
 
 def _load_and_merge(
     files: List[Path],
-    time_tolerance: str = "1s",
 ) -> pd.DataFrame:
     """
     Parse all .ict files, group by instrument folder, concatenate within each
-    instrument, then merge across instruments via ``merge_asof``.
+    instrument, then merge across instruments via an exact-second outer join
+    on ``datetime_utc`` -- no merge_asof tolerance. A second reported by only
+    one instrument becomes a row with that instrument's columns filled and
+    the rest NaN; the row grid is the union of every instrument's own
+    (already floored-to-the-second) timestamps, not anchored to one "primary"
+    instrument's grid.
 
     Parameters
     ----------
     files : list of Path
-    time_tolerance : str
-        Time tolerance for merge_asof (default ``'1s'``).
 
     Returns
     -------
@@ -297,17 +299,22 @@ def _load_and_merge(
 
     instrument_dfs: Dict[str, pd.DataFrame] = {}
     for inst, dfs in by_instrument.items():
-        combined = pd.concat(dfs, ignore_index=True)
-        combined.sort_values("datetime_utc", inplace=True)
-        combined.reset_index(drop=True, inplace=True)
+        combined = (
+            pd.concat(dfs, ignore_index=True)
+            .dropna(subset=["datetime_utc"])
+            .sort_values("datetime_utc")
+            .drop_duplicates(subset=["datetime_utc"], keep="first")
+            .reset_index(drop=True)
+        )
         instrument_dfs[inst] = combined
         print(f"  Instrument '{inst}': {len(combined):,} rows, "
               f"{len(combined.columns)} cols")
 
-    # Merge across instruments with merge_asof on datetime_utc
-    # Start with MMS (navigation/met state) as the left frame so every
-    # row has valid T and P whenever possible.  MACPEX uses folder "MMS-Met";
-    # other mirror sites may use "MMS-MetData".
+    # Start with MMS (navigation/met state) as the base frame -- order no
+    # longer determines which rows survive (outer join keeps every
+    # instrument's timestamps), just which columns win on exact-second
+    # column-name collisions below. MACPEX uses folder "MMS-Met"; other
+    # mirror sites may use "MMS-MetData".
     instruments = list(instrument_dfs.keys())
     primary = next(
         (i for i in instruments if i in ("MMS-MetData", "MMS-Met")),
@@ -326,15 +333,14 @@ def _load_and_merge(
         overlap = set(merged.columns) & set(right.columns) - {"datetime_utc"}
         right = right.drop(columns=list(overlap), errors="ignore")
 
-        merged = pd.merge_asof(
-            merged.sort_values("datetime_utc"),
-            right.sort_values("datetime_utc"),
+        merged = pd.merge(
+            merged,
+            right,
             on="datetime_utc",
-            tolerance=pd.Timedelta(time_tolerance),
-            direction="nearest",
+            how="outer",
         )
 
-    return merged
+    return merged.sort_values("datetime_utc").reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +385,6 @@ def load_macpex(
     pattern: str = "*.ict",
     wv_source: WvSource = "HWV",
     h2o_ranking: Optional[List[str]] = None,
-    time_tolerance: str = "1s",
 ) -> pd.DataFrame:
     """
     Load all MACPEX ICT files, merge across instruments, and compute Si.
@@ -389,7 +394,8 @@ def load_macpex(
     1. Recursively finds all ``.ict`` files under *data_dir*.
     2. Groups them by instrument sub-folder (DLH-H2O, HWV, JLH, MMS-MetData, …).
     3. Concatenates files within each instrument group then merges all groups
-       via ``merge_asof`` on ``datetime_utc`` (tolerance = *time_tolerance*).
+       via an exact-second outer join on ``datetime_utc`` (no tolerance --
+       a second reported by only one instrument stays NaN for the rest).
     4. Applies MMS-MetData raw-integer scaling:
        - Temperature: raw × 0.01 → Kelvin
        - Pressure:    raw × 0.10 → hPa
@@ -416,10 +422,6 @@ def load_macpex(
           Good quality; use when DLH data are unavailable.
         - ``"JLH"`` — JPL Laser Hygrometer (``JLH_H2O(v)_ppmv``).
           Limited coverage (≈13 %); primarily for cross-validation.
-
-    time_tolerance : str, optional
-        Tolerance passed to ``merge_asof`` when aligning instruments
-        (default: ``"1s"``).
 
     Returns
     -------
@@ -464,7 +466,7 @@ def load_macpex(
     # ------------------------------------------------------------------
     # 1. Parse and merge all instruments
     # ------------------------------------------------------------------
-    df = _load_and_merge(files, time_tolerance=time_tolerance)
+    df = _load_and_merge(files)
 
     # ------------------------------------------------------------------
     # 2. Scale MMS-MetData temperature and pressure from raw integers

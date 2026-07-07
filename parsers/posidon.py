@@ -47,7 +47,7 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import qv_from_ppmv, sw_from_si
+from .utils import qv_from_ppmv, sw_from_si, round_timestamp_to_second
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
     df["datetime_utc"] = flight_date + pd.to_timedelta(
         df[time_col].astype(float), unit="s"
     )
-    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True, errors="coerce").dt.as_unit("ns")
+    df["datetime_utc"] = round_timestamp_to_second(df["datetime_utc"])
 
     # --- Prefix data columns with instrument stem ---
     file_prefix = filepath.stem.split("_")[0]
@@ -168,12 +168,14 @@ def _parse_ict_file(filepath: Path) -> pd.DataFrame:
 
 def _combine_ict_files(
     file_list: list[Path],
-    time_tolerance: str = "1s",
 ) -> pd.DataFrame:
     """Load and merge all POSIDON ICT files across instruments.
 
     Files from the same instrument are concatenated; then instruments are
-    joined with ``merge_asof`` (±*time_tolerance*) on *datetime_utc*.
+    joined via an exact-second outer join on *datetime_utc* -- no merge_asof
+    tolerance. A second reported by only one instrument becomes a row with
+    that instrument's columns filled and the rest NaN; the row grid is the
+    union of every instrument's own (floored-to-the-second) timestamps.
     """
     dfs: list[pd.DataFrame] = []
     for fp in file_list:
@@ -199,26 +201,22 @@ def _combine_ict_files(
     for prefix, df_list in instrument_dfs.items():
         merged_instruments[prefix] = (
             pd.concat(df_list, ignore_index=True)
-            .assign(datetime_utc=lambda frame: pd.to_datetime(frame["datetime_utc"], utc=True, errors="coerce").dt.as_unit("ns"))
+            .dropna(subset=["datetime_utc"])
             .sort_values("datetime_utc")
+            .drop_duplicates(subset=["datetime_utc"], keep="first")
             .reset_index(drop=True)
         )
 
-    # Merge across instruments using merge_asof
+    # Merge across instruments via exact-second outer join. Order no longer
+    # determines which rows survive (outer join keeps every instrument's
+    # timestamps); it's kept sorted only for determinism.
     inst_names = sorted(merged_instruments.keys())
-    combined = merged_instruments[inst_names[0]].set_index("datetime_utc")
+    combined = merged_instruments[inst_names[0]]
     for name in inst_names[1:]:
-        right = merged_instruments[name].set_index("datetime_utc")
-        combined = pd.merge_asof(
-            combined.sort_index(),
-            right.sort_index(),
-            left_index=True,
-            right_index=True,
-            tolerance=pd.Timedelta(time_tolerance),
-            direction="nearest",
-        )
+        right = merged_instruments[name]
+        combined = pd.merge(combined, right, on="datetime_utc", how="outer")
 
-    return combined.reset_index()
+    return combined.sort_values("datetime_utc").reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +226,6 @@ def _combine_ict_files(
 def load_posidon(
     data_dir: Union[str, Path],
     pattern: str = "*.ict",
-    time_tolerance: str = "1s",
 ) -> pd.DataFrame:
     """Load all POSIDON ICT files from *data_dir* and return a merged DataFrame.
 
@@ -244,8 +241,6 @@ def load_posidon(
         (``DLH-H2O/``, ``MMS/``, ``NOAA-H2O/``).
     pattern:
         Glob pattern for ICT files (default ``*.ict``).
-    time_tolerance:
-        Maximum time gap for ``merge_asof`` across instruments (default ``"1S"``).
 
     Returns
     -------
@@ -261,7 +256,7 @@ def load_posidon(
             f"No files matching '{pattern}' found under '{data_dir}'"
         )
 
-    combined = _combine_ict_files(files, time_tolerance=time_tolerance)
+    combined = _combine_ict_files(files)
 
     # --- Apply correction factors ---
     if "MMS-1HZ_T" in combined.columns:

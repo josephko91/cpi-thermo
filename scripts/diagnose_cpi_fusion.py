@@ -44,6 +44,7 @@ from parsers.cpi_timestamps import (
     CPI_TO_ENV_CAMPAIGN as CPI_TO_ENV,
     load_cpi_embeddings_timestamps,
 )
+from parsers.utils import round_timestamp_to_second
 from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 # ---------------------------------------------------------------------------
@@ -54,8 +55,6 @@ DEFAULT_ENV   = ROOT / "data" / "out" / "combined_env_data.parquet"
 RUN_TS        = _run_timestamp()
 DIAG_DIR      = ROOT / "logs" / "cpi_fusion" / RUN_TS
 FIGS_DIR      = ROOT / "figs" / "cpi_fusion" / RUN_TS
-
-MATCH_TOLERANCE_S = 1   # seconds; CPI timestamps are whole-second
 
 # Standard variables to check coverage for, in report/table display order.
 COVERAGE_VARS = ["Tair_C", "P_hPa", "Alt_m", "Lat", "Lon", "qv", "Si"]
@@ -88,24 +87,23 @@ def load_or_build_env(env_path: Path, rebuild: bool) -> pd.DataFrame:
 def merge_campaign(
     cpi_sub: pd.DataFrame,
     env_sub: pd.DataFrame,
-    tol_s: int = MATCH_TOLERANCE_S,
 ) -> pd.DataFrame:
-    """Nearest-timestamp merge (merge_asof) within ±tol_s seconds."""
-    cpi_s = cpi_sub.dropna(subset=["datetime"]).sort_values("datetime")
-    env_s = env_sub.dropna(subset=["Timestamp"]).sort_values("Timestamp")
-    # Ensure both keys share the same datetime resolution (ns, UTC)
-    cpi_s = cpi_s.copy()
-    cpi_s["datetime"] = cpi_s["datetime"].dt.as_unit("ns")
-    env_s = env_s.copy()
-    env_s["Timestamp"] = env_s["Timestamp"].dt.as_unit("ns")
+    """Exact-second merge -- no tolerance, consistent with the rest of the
+    pipeline (see GitHub issue #12). A CPI image with no exact-second env
+    reading gets NaN for every COVERAGE_VARS column, not a nearest-match
+    fabricated from a different second."""
+    cpi_s = cpi_sub.dropna(subset=["datetime"]).copy()
+    cpi_s["datetime"] = round_timestamp_to_second(cpi_s["datetime"])
+    env_s = env_sub.dropna(subset=["Timestamp"]).copy()
+    env_s["Timestamp"] = round_timestamp_to_second(env_s["Timestamp"])
+    env_s = env_s.drop_duplicates(subset=["Timestamp"], keep="first")
 
-    merged = pd.merge_asof(
+    merged = pd.merge(
         cpi_s,
         env_s[["Timestamp"] + COVERAGE_VARS],
         left_on="datetime",
         right_on="Timestamp",
-        direction="nearest",
-        tolerance=pd.Timedelta(seconds=tol_s),
+        how="left",
     )
     return merged
 
@@ -414,25 +412,31 @@ def write_report(summary: pd.DataFrame, env: pd.DataFrame, out_path: Path) -> st
         "   Evidence: CPI images on 2011-05-23 fall 16:35-19:32, while env data",
         "   starts at 21:20 UTC — consistent with a 5-hour CDT offset.",
         "",
-        "7. MIDCIX Si/Tair STILL ~26% — JLH GENUINELY ABSENT ON 2 DATES",
+        "7. MIDCIX Si/Tair ~21% — JLH GENUINELY ABSENT ON 2 DATES",
         "   JLH (water vapor) data files exist only for Apr 17, 19, 30, May 2,",
         "   3, 5, 6 — no Tair_C/Si/qv is possible for Apr 22 (17k) or Apr 27",
         "   (18k) CPI images. This part is a genuine data gap, not fixable",
-        "   without new raw data. Timestamp MATCH itself was recovered from",
-        "   ~26% to ~65%, though: FP/ (navigation) files exist for those same",
-        "   2 dates and load_midcix() now adds position-only fallback rows",
-        "   (Lat/Lon/Alt_m, no Tair/Si/qv) from them, mirroring the HW/ALIAS",
-        "   fallback pattern in crystal_face_nasa.py.",
+        "   without new raw data. Timestamp MATCH itself is ~100% (position",
+        "   data exists for every date via the FP/ navigation fallback rows",
+        "   in load_midcix()), but Tair_C/Si/qv match only where JLH itself",
+        "   has a reading at that exact second (see GitHub issue #12 --",
+        "   merge_asof tolerance removed repo-wide 2026-07-07; this number",
+        "   reflects real instrument coverage, not a merge artifact).",
         "",
-        "8. CRYSTAL_FACE_NASA LOW COVERAGE (~44%) — GENUINE DATA LIMITATION",
-        "   JLH (1 Hz, primary Si source) has large gaps during cloud penetrations",
-        "   — exactly when CPI is most active (anti-correlation). Harvard WV (HW)",
-        "   provides a fallback but at 10-second resolution. With ±1 s merge tolerance,",
-        "   only ~20–30% of CPI-active seconds inside HW-covered periods can match.",
-        "   Bug fixes applied: JLH+MM primary merge, HW+MM/NM gap-fill added for",
-        "   JLH-absent dates and in-flight JLH gaps. Coverage improved from 24% to 44%.",
-        "   Further improvement would require relaxing merge tolerance to ±5 s or",
-        "   interpolating HW to 1 Hz — both involve data quality trade-offs.",
+        "8. CRYSTAL_FACE_NASA Tair_C/Si COVERAGE ~26% — GENUINE DATA LIMITATION",
+        "   JLH (1 Hz, primary Si/Tair source) has large gaps during cloud",
+        "   penetrations -- exactly when CPI is most active (anti-correlation).",
+        "   Harvard WV (HW) fills some Si gaps but at ~10 s native cadence, so",
+        "   it can only ever match a fraction of JLH-absent seconds even with",
+        "   perfect alignment. As of 2026-07-07 (GitHub issue #12) every merge",
+        "   in this pipeline is an exact-second join with no tolerance, so this",
+        "   ~26% is the real, honest coverage -- the previously-reported ~44%",
+        "   included seconds where a stale HW/MM/NM value from a different",
+        "   second had been reused via a merge_asof tolerance (up to 60 s in",
+        "   one case). Position (Lat/Lon/Alt_m) coverage is unaffected (100%),",
+        "   since MMS geolocation is independently exact-second-matched.",
+        "   Further improvement would require a new, higher-frequency water-",
+        "   vapor/temperature source for JLH-gap periods -- not a merge fix.",
         "",
     ]
 
@@ -455,15 +459,11 @@ def parse_args() -> argparse.Namespace:
                    help="Path to CPI embeddings timestamps CSV")
     p.add_argument("--rebuild", action="store_true",
                    help="Re-run main.py to rebuild combined_env_data.parquet")
-    p.add_argument("--tol", type=int, default=MATCH_TOLERANCE_S,
-                   help="Timestamp match tolerance in seconds (default: 1)")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    global MATCH_TOLERANCE_S
-    MATCH_TOLERANCE_S = args.tol
 
     # Load data
     cpi = load_cpi(args.cpi_csv)

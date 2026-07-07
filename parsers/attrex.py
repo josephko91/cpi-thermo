@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Union, Dict, List, Optional
 from collections import defaultdict
 
-from .utils import normalize_datetime_utc, si_from_ppmv, qv_from_ppmv, sw_from_si
+from .utils import round_timestamp_to_second, si_from_ppmv, qv_from_ppmv, sw_from_si
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ def _parse_ict_file(
     else:
         # Use the first column as seconds-of-day
         df["datetime_utc"] = flight_date + pd.to_timedelta(df.iloc[:, 0], unit="s")
-    df["datetime_utc"] = normalize_datetime_utc(df["datetime_utc"])
+    df["datetime_utc"] = round_timestamp_to_second(df["datetime_utc"])
 
     # --- optionally prefix data columns (not datetime_utc) ---
     if prefix:
@@ -211,17 +211,18 @@ def _parse_ict_file(
 
 def _combine_ict_files(
     files: List[Path],
-    time_tolerance: str = "1s",
 ) -> pd.DataFrame:
     """
-    Parse all .ict files, group by instrument, and merge via ``merge_asof``.
+    Parse all .ict files, group by instrument, and merge via an exact-second
+    outer join on ``datetime_utc`` -- no merge_asof tolerance. A second
+    reported by only one instrument becomes a row with that instrument's
+    columns filled and the rest NaN; the row grid is the union of every
+    instrument's own (floored-to-the-second) timestamps.
 
     Parameters
     ----------
     files : list of Path
         All .ict files found under the ATTREX data directory.
-    time_tolerance : str
-        Tolerance for ``merge_asof`` (default ``'1s'``).
 
     Returns
     -------
@@ -247,19 +248,26 @@ def _combine_ict_files(
                 print(f"  Warning: Could not parse {fp.name} ({inst}): {e}")
         if parsed:
             combined = pd.concat(parsed, ignore_index=True)
-            combined["datetime_utc"] = normalize_datetime_utc(combined["datetime_utc"])
-            combined.sort_values("datetime_utc", inplace=True)
-            combined.reset_index(drop=True, inplace=True)
+            combined["datetime_utc"] = round_timestamp_to_second(combined["datetime_utc"])
+            # UCATS-H2O has an undocumented ~1.5s native sample interval, so
+            # flooring to the second can put two originally-distinct UCATS
+            # samples in the same bucket; keep_first for a deterministic
+            # single value per second across every instrument, not just UCATS.
+            combined = (
+                combined.dropna(subset=["datetime_utc"])
+                .sort_values("datetime_utc")
+                .drop_duplicates(subset=["datetime_utc"], keep="first")
+                .reset_index(drop=True)
+            )
             instrument_dfs[inst] = combined
 
     if not instrument_dfs:
         raise ValueError("No ATTREX instrument files could be parsed.")
 
-    # Choose the merge anchor: prefer MMS (provides T and P required for Si;
-    # its 1 Hz time grid is the natural base for all joins). If MMS isn't
-    # present, fall back to the instrument that starts earliest.
-    # Anchoring on rglob insertion order is wrong — it silently drops data
-    # from instruments that start earlier than the accidentally-chosen anchor.
+    # Start with MMS (provides T and P required for Si) if present, else the
+    # instrument that starts earliest -- order no longer determines which
+    # rows survive (outer join keeps every instrument's timestamps), just
+    # column precedence on the rare exact-second collision below.
     if "MMS" in instrument_dfs:
         anchor = "MMS"
     else:
@@ -277,15 +285,14 @@ def _combine_ict_files(
         right_clean = right.drop(columns=[c for c in overlap if c != "source_file"], errors="ignore")
         if "source_file" in right_clean.columns and "source_file" in merged.columns:
             right_clean = right_clean.rename(columns={"source_file": f"source_file_{inst}"})
-        merged = pd.merge_asof(
-            merged.sort_values("datetime_utc"),
-            right_clean.sort_values("datetime_utc"),
+        merged = pd.merge(
+            merged,
+            right_clean,
             on="datetime_utc",
-            tolerance=pd.Timedelta(time_tolerance),
-            direction="nearest",
+            how="outer",
         )
 
-    return merged
+    return merged.sort_values("datetime_utc").reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +340,7 @@ def load_attrex(
     print(f"  Found {len(files)} .ict files in {data_dir}")
 
     # --- merge across instruments ---
-    df = _combine_ict_files(files, time_tolerance="1s")
+    df = _combine_ict_files(files)
 
     # --- apply MMS scaling (raw integers → physical units) ---
     # Per ATTREX ICARTT documentation, MMS-1HZ stores T and P as scaled integers:

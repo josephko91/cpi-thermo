@@ -168,6 +168,23 @@ def normalize_datetime_utc(values: pd.Series) -> pd.Series:
     return parsed.dt.as_unit("ns")
 
 
+def round_timestamp_to_second(series: pd.Series) -> pd.Series:
+    """Floor timestamps to whole seconds for exact-key cross-instrument merges.
+
+    .dt.round("s") uses round-half-to-even ("banker's rounding"): X.5-second
+    values round toward the nearest EVEN second, not consistently up. Some
+    source files sample at a fixed .5s offset, so two adjacent, physically
+    distinct 1 Hz samples (e.g. :03.5 and :04.5) both round to :04 and
+    collide into a spurious duplicate-timestamp row. floor() truncates
+    consistently in one direction, preserving the original 1s spacing with
+    no collisions. Every cross-instrument merge in this pipeline is an
+    exact-key join on this floored timestamp -- no merge_asof tolerance --
+    so consistent flooring across parsers is what makes the join keys
+    actually collide across instruments at the same wall-clock second.
+    """
+    return pd.to_datetime(series, utc=True, errors="coerce").dt.floor("s")
+
+
 # =============================================================================
 # Column Name Utilities
 # =============================================================================
