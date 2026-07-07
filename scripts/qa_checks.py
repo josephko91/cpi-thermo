@@ -321,9 +321,15 @@ def check_02_internal_consistency(
 
     # Campaigns that fly primarily through cloud / precipitation — mild
     # exceedances are physically expected for these.
+    # AIRS-II (Alliance Icing Research Study II) uses the same chilled-mirror
+    # dew-point instrument as ARM/IPHEX/etc. and by design samples in-cloud
+    # icing conditions -- it was missing from this set (2026-07-06 audit:
+    # 399 rows misclassified as "severe"/unexplained that are the same
+    # expected in-cloud chilled-mirror behavior documented for the other
+    # campaigns here).
     IN_CLOUD_CAMPAIGNS = {
         "ARM", "IPHEX", "MC3E", "OLYMPEX", "ICE-L",
-        "CRYSTAL-FACE-UND", "CRYSTAL-FACE-NASA",
+        "CRYSTAL-FACE-UND", "CRYSTAL-FACE-NASA", "AIRS-II",
     }
 
     has_vars = work[["Tair_C", "P_hPa", "qv"]].notna().all(axis=1)
@@ -683,6 +689,28 @@ def check_04_sentinel_values(
 
     SENTINELS = [-9999.0, -9999.99, -999.0, -999.99, -8888.0, -7777.0,
                  9999.0, 99999.0, -1000.0, 1000.0]
+    # 1000.0/-1000.0/9999.0 are ambiguous for Alt_m (meters), P_hPa, and
+    # *_ppmv concentration columns -- all three routinely pass through these
+    # magnitudes as real physical values (Alt_m crossing 1000 m or 9999 m
+    # during a climb/descent; P_hPa near 1000 hPa at low altitude; water
+    # vapor mixing ratios of 1000-10000 ppmv in the lower troposphere).
+    # 2026-07-06 audit: every one of 34 flagged (campaign, variable,
+    # sentinel) combinations using these two magnitudes was confirmed to be
+    # real, continuously-varying data (verified against the raw parquet: the
+    # matched values are either many distinct floats spanning the tolerance
+    # band, or -- for whole-meter-quantized GPS altitude -- short, separate
+    # multi-second bursts of a real repeated integer reading at different
+    # times in the flight), not an un-converted fill code. No true sentinel
+    # anywhere in the dataset uses either magnitude. Excluding these
+    # variable/sentinel combinations avoids the false positives while
+    # keeping both values active for every other column (e.g. Tair_C, Si,
+    # qv), where they remain unambiguous and useful.
+    AMBIGUOUS_SENTINELS = {1000.0, -1000.0, 9999.0}
+    def _sentinel_applies(col: str, sent: float) -> bool:
+        if sent not in AMBIGUOUS_SENTINELS:
+            return True
+        return not (col in ("Alt_m", "P_hPa") or col.endswith("_ppmv"))
+
     NUMERIC_COLS = [c for c in df.columns
                     if pd.api.types.is_numeric_dtype(df[c])
                     and c not in ("Lat", "Lon")]  # lat/lon have no sentinels in this dataset
@@ -717,6 +745,8 @@ def check_04_sentinel_values(
             for sent in SENTINELS:
                 if sent == 0:
                     continue  # skip 0 — too many legitimate zeros
+                if not _sentinel_applies(col, sent):
+                    continue
                 tol = abs(sent) * 0.0001
                 mask_sent = (pd.to_numeric(sub[col], errors="coerce") - sent).abs() <= tol
                 n_sent = int(mask_sent.sum())
@@ -729,7 +759,9 @@ def check_04_sentinel_values(
                         "pct_of_campaign": round(n_sent / n_camp * 100, 4),
                     })
 
-    sentinel_df = pd.DataFrame(sentinel_rows)
+    sentinel_df = pd.DataFrame(sentinel_rows, columns=[
+        "Campaign", "variable", "sentinel_value", "n_matching", "pct_of_campaign",
+    ])
     tail_df     = pd.DataFrame(tail_rows)
 
     sent_path = out_dir / "04_sentinel_flags.csv"
@@ -1252,18 +1284,6 @@ def check_08_vertical_profiles(
             T_K = 216.65
         return T_K - 273.15
 
-    T_isa_ref = [_icao_T_from_P(pc) for pc in P_CENTERS]
-
-    # Saturation qv at ISA temperature for each pressure center
-    qv_sat_ref = []
-    for pc, Tc in zip(P_CENTERS, T_isa_ref):
-        if np.isnan(Tc):
-            qv_sat_ref.append(np.nan)
-            continue
-        es = float(es_ice_hPa(np.array([Tc]))[0])
-        denom = pc - es
-        qv_sat_ref.append(0.622 * es / denom * 1000 if denom > 0 else np.nan)
-
     df2 = df.copy()
     df2["P_hPa"]  = pd.to_numeric(df2["P_hPa"],  errors="coerce")
     df2["Tair_C"] = pd.to_numeric(df2["Tair_C"], errors="coerce")
@@ -1283,14 +1303,31 @@ def check_08_vertical_profiles(
             pc      = (p_lo + p_hi) / 2
 
             T_isa = _icao_T_from_P(pc)
-            es_pc = float(es_ice_hPa(np.array([T_isa]))[0]) if not np.isnan(T_isa) else np.nan
-            denom = pc - es_pc
-            qv_sat_pc = 0.622 * es_pc / denom * 1000 if (denom > 0 and not np.isnan(es_pc)) else np.nan
 
             T_mean = float(bin_sub["Tair_C"].mean()) if n_bin else np.nan
             T_std  = float(bin_sub["Tair_C"].std())  if n_bin else np.nan
             qv_mean= float(bin_sub["qv"].mean())     if n_bin else np.nan
             qv_std = float(bin_sub["qv"].std())      if n_bin else np.nan
+
+            # Saturation reference for the qv_exceeds_saturation check: use
+            # the bin's own OBSERVED mean temperature and the LIQUID
+            # saturation formula (matching QC2's row-level check), not the
+            # ISA theoretical temperature with the ICE formula. Real
+            # near-surface/lower-troposphere air is routinely warmer than
+            # the ISA standard atmosphere, and ice saturation vapor pressure
+            # is always <= liquid at the same temperature -- combining both
+            # systematically underestimated the true reference and produced
+            # widespread false positives (verified: 41 of 47 originally
+            # flagged bins no longer exceed saturation once corrected).
+            # T_isa is still used for the separate T_deviation_from_ISA
+            # check below and for the T_isa_C/T_dev_C profile columns, where
+            # comparing against the ISA reference is the intended check.
+            if not np.isnan(T_mean):
+                es_pc = float(es_liq_hPa(np.array([T_mean]))[0])
+                denom = pc - es_pc
+                qv_sat_pc = 0.622 * es_pc / denom * 1000 if denom > 0 else np.nan
+            else:
+                qv_sat_pc = np.nan
 
             row = {
                 "Campaign": camp,
