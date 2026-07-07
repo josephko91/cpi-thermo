@@ -19,6 +19,51 @@ engineering logs.
 
 ---
 
+## 2026-07-07 — L1 fixed to one row per CPI image (was collapsing ~30 images/second into 1)
+
+**See:** `scripts/build_data_tiers.py::build_l1()`.
+**Campaigns:** 15 (no change), but `combined_env_data_L1.parquet` /
+`_L2.parquet` grow substantially.
+
+`build_l1()` was a semi-join (filtered L0 rows to seconds present in a
+campaign's CPI-image set) rather than a proper one-to-many merge. Since
+CPI images average ~30 per matched second (up to 644 in one second),
+every image beyond the first at a given second was silently discarded.
+Rewrote it as a per-campaign inner merge -- one row per CPI image, env
+columns duplicated across images sharing a second, plus a new
+`cpi_filename` column so every row traces back to its source image.
+
+Surfaced a related issue while fixing this: L0 is not always unique per
+`(Campaign, Timestamp)` once floored to the second -- ARM is a genuine
+native 4Hz stream (0.25s intervals), so naively joining against its
+floored timestamp fanned each image out across up to 4 sub-second L0
+rows. Fixed by deduping L0 to one row per floored second (keep first)
+*inside `build_l1()` only* -- L0 itself and its native sub-second
+resolution are untouched.
+
+| Campaign | n_L1 before -> after |
+|---|---|
+| ARM | 15,452 -> 230,029 |
+| CRYSTAL-FACE-NASA | 2,716 -> 78,151 |
+| CRYSTAL-FACE-UND | 28,609 -> 1,608,674 |
+| MIDCIX | 5,200 -> 90,667 |
+| MPACE | 5,806 -> 35,997 |
+| AIRS-II | 4,709 -> 92,168 |
+| ICE-L | 8,407 -> 46,203 |
+| ISDAC | 6,986 -> 400,805 |
+| MACPEX | 486 -> 80,240 |
+| MC3E | 15,586 -> 173,766 |
+| ATTREX | 1,000 -> 122,050 |
+| IPHEX | 17,406 -> 38,697 |
+| **TOTAL** | **112,363 -> 2,997,447** |
+
+L2 grows correspondingly (72,809 -> 1,828,818). 93.66% of all 3,200,351
+CPI images across the 12 campaigns with any CPI archive coverage now have
+a matching L1 row (the remaining ~6.3% have no L0 second at all -- no
+instrument reported anything at that exact time).
+
+---
+
 ## 2026-07-07 — Exact-second merge rewrite; L0/L1/L2 data tiers introduced
 
 **See:** `docs/decisions/2026-07-07-exact-second-merge-rewrite.md`,

@@ -22,7 +22,7 @@ fabricating time resolution the data didn't have).
 | Tier | File | Definition |
 |------|------|------------|
 | L0 | `data/out/combined_env_data.parquet` | Every whole second where *any* instrument in a campaign reported *anything* (union of all instrument timestamps) |
-| L1 | `data/out/combined_env_data_L1.parquet` | L0 filtered to seconds with a matching CPI particle image for that campaign |
+| L1 | `data/out/combined_env_data_L1.parquet` | One row per CPI particle image, joined to its exact-second L0 env record (`cpi_filename` column identifies the source image; multiple images sharing a second each get their own row with duplicated env data) |
 | L2 | `data/out/combined_env_data_L2.parquet` | L1 filtered to rows with every core variable present (`Tair_C, P_hPa, Si, qv, Lat, Lon, Alt_m`) |
 
 Built by `scripts/build_data_tiers.py` (L1/L2 derived from L0 + `parsers/cpi_timestamps.py`,

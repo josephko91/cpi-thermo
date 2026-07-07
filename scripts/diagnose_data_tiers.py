@@ -8,8 +8,9 @@ Reports on the three data tiers produced by scripts/build_data_tiers.py:
        instrument in a campaign reported *anything* (union of all
        instrument timestamps, exact-second joins only -- no merge_asof
        tolerance; see docs/decisions/2026-07-07-exact-second-merge-rewrite.md).
-  L1 - data/out/combined_env_data_L1.parquet: L0 filtered to seconds with
-       a matching CPI particle image for that campaign.
+  L1 - data/out/combined_env_data_L1.parquet: one row per CPI particle
+       image, joined to its exact-second L0 env record (`cpi_filename`
+       column identifies the source image).
   L2 - data/out/combined_env_data_L2.parquet: L1 filtered to rows with a
        complete record (every core variable present).
 
@@ -44,6 +45,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from parsers.cpi_timestamps import load_cpi_embeddings_timestamps
 from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 # Core "complete record" columns -- mirrors build_data_tiers.py's CORE_COLS.
@@ -79,6 +81,8 @@ def _parse_args() -> argparse.Namespace:
                    default=ROOT / "data" / "out" / "combined_env_data_L1.parquet")
     p.add_argument("--l2", type=Path,
                    default=ROOT / "data" / "out" / "combined_env_data_L2.parquet")
+    p.add_argument("--cpi", type=Path,
+                   default=ROOT / "data" / "raw" / "cpi_embeddings_timestamps.csv")
     p.add_argument("--out", type=Path,
                    default=ROOT / "logs" / "diagnose_data_tiers" / ts)
     p.add_argument("--figs", type=Path,
@@ -86,10 +90,19 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def row_counts_table(tiers: dict[str, pd.DataFrame], campaigns: list[str]) -> pd.DataFrame:
+def row_counts_table(
+    tiers: dict[str, pd.DataFrame],
+    campaigns: list[str],
+    images_per_campaign: pd.Series,
+) -> pd.DataFrame:
+    """n_L1 is an image count (one row per CPI image), not a second count,
+    so it's compared against the true CPI image total (pct_images_matched)
+    rather than against n_L0 -- an L1/L0 ratio would be meaningless (and
+    can exceed 100%) whenever a campaign has multiple images per second.
+    """
     rows = []
     for camp in campaigns:
-        row = {"Campaign": camp}
+        row = {"Campaign": camp, "n_cpi_images": int(images_per_campaign.get(camp, 0))}
         for tier_name, df in tiers.items():
             sub = df[df["Campaign"] == camp] if not df.empty else df.iloc[0:0]
             row[f"n_{tier_name}"] = len(sub)
@@ -99,21 +112,19 @@ def row_counts_table(tiers: dict[str, pd.DataFrame], campaigns: list[str]) -> pd
             else:
                 row[f"{tier_name}_date_start"] = ""
                 row[f"{tier_name}_date_end"] = ""
-        n0, n1 = row["n_L0"], row["n_L1"]
-        row["pct_L1_of_L0"] = round(n1 / n0 * 100, 2) if n0 else 0.0
+        n_images, n1 = row["n_cpi_images"], row["n_L1"]
+        row["pct_images_matched"] = round(n1 / n_images * 100, 2) if n_images else 0.0
         row["pct_L2_of_L1"] = round(row["n_L2"] / n1 * 100, 2) if n1 else 0.0
-        row["pct_L2_of_L0"] = round(row["n_L2"] / n0 * 100, 2) if n0 else 0.0
         rows.append(row)
 
-    totals = {"Campaign": "TOTAL"}
+    totals = {"Campaign": "TOTAL", "n_cpi_images": int(images_per_campaign.sum())}
     for tier_name, df in tiers.items():
         totals[f"n_{tier_name}"] = len(df)
         totals[f"{tier_name}_date_start"] = str(df["Timestamp"].min().date()) if len(df) else ""
         totals[f"{tier_name}_date_end"] = str(df["Timestamp"].max().date()) if len(df) else ""
-    n0, n1 = totals["n_L0"], totals["n_L1"]
-    totals["pct_L1_of_L0"] = round(n1 / n0 * 100, 2) if n0 else 0.0
+    n_images, n1 = totals["n_cpi_images"], totals["n_L1"]
+    totals["pct_images_matched"] = round(n1 / n_images * 100, 2) if n_images else 0.0
     totals["pct_L2_of_L1"] = round(totals["n_L2"] / n1 * 100, 2) if n1 else 0.0
-    totals["pct_L2_of_L0"] = round(totals["n_L2"] / n0 * 100, 2) if n0 else 0.0
     rows.append(totals)
 
     return pd.DataFrame(rows)
@@ -202,13 +213,17 @@ def main() -> None:
     tiers = {"L0": l0, "L1": l1, "L2": l2}
     print(f"  L0: {len(l0):,}  L1: {len(l1):,}  L2: {len(l2):,}\n")
 
+    print(f"Loading CPI timestamps from {args.cpi} ...")
+    cpi = load_cpi_embeddings_timestamps(args.cpi)
+    images_per_campaign = cpi.groupby("campaign_env").size()
+
     campaigns = [c for c in CAMPAIGN_ORDER if c in l0["Campaign"].unique()]
 
-    counts = row_counts_table(tiers, campaigns)
+    counts = row_counts_table(tiers, campaigns, images_per_campaign)
     counts_path = args.out / "tier_row_counts.csv"
     counts.to_csv(counts_path, index=False)
     print(f"Saved {counts_path}")
-    print(counts[["Campaign", "n_L0", "n_L1", "n_L2", "pct_L1_of_L0", "pct_L2_of_L1", "pct_L2_of_L0"]]
+    print(counts[["Campaign", "n_cpi_images", "n_L0", "n_L1", "n_L2", "pct_images_matched", "pct_L2_of_L1"]]
           .to_string(index=False))
 
     var_cov = variable_coverage_table(tiers, campaigns)
