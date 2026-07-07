@@ -80,12 +80,20 @@ matched overall (57.2% with both Tair_C and Si) — run
 open items:
 
 - **ARM qv NaN**: 63.6% NaN (real data sparsity in dry upper troposphere, not parser bug)
-- **ARM 2000-03-13 CPI timestamp anomaly**: CPI has images at 00:00-01:xx UTC with no
-  corresponding env data that date (env only covers 18:07-22:29). Investigated —
-  raw archive is complete (12 files = campaign's official "12 IOP flights" exactly;
-  filename encoding matches every file's actual data to the minute). Most likely a
-  CPI-side ground-test/calibration session or clock fault, not a missing raw file.
-  See `docs/decisions/2026-07-05-arm-cpi-timestamp-investigation.md`.
+- **CPI/env unmatched images (6.34% of all CPI images, 202,904 of 3,200,351)**: not a
+  pipeline bug — a real, physical fact about when the CPI camera was powered on
+  relative to when the aircraft's environmental instruments were recording. Dominated
+  by ISDAC (105,007 unmatched — 2 dates with a missing raw env file, 2 dates with a
+  pre-flight CPI gap) and ARM (65,674 unmatched, 98.9% on one date, 2000-03-13: CPI has
+  images at 00:00-01:xx UTC with no corresponding env data that date, env only covers
+  18:07-22:29; raw archive confirmed complete — 12 files = campaign's official "12 IOP
+  flights" exactly). Smaller pre/post-flight CPI gaps also found in MC3E, ATTREX, and
+  IPHEX. Checked whether a CPI timestamp/timezone error could explain any of it
+  (crawled `github.com/vprzybylo/cocpit`, the tool that produced these filenames) —
+  ruled out: none of the gaps resolve via any plausible local-time offset. See
+  `docs/decisions/2026-07-07-cpi-env-unmatched-images-investigation.md` (supersedes
+  the narrower `2026-07-05-arm-cpi-timestamp-investigation.md` in scope, though that
+  doc's ARM-specific archive-completeness check is still the source of truth for ARM).
 - **IPHEX/OLYMPEX cold-regime Si flags** (1,391 / 45 rows, IPHEX 2014-06-13 + 2014-05-19
   flights and OLYMPEX 15_39_28 flight): chilled-mirror hysteresis at extreme cold can
   amplify small errors into large fractional Si swings, but Si up to ~1.5-1.7 is also
