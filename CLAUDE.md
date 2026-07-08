@@ -127,6 +127,7 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 | `scripts/build_data_tiers.py` | `logs/build_data_tiers/<ts>/` (tier_summary.csv) | — |
 | `scripts/diagnose_data_tiers.py` | `logs/diagnose_data_tiers/<ts>/` (row counts + variable coverage CSVs) | `figs/diagnose_data_tiers/<ts>/` (funnel + coverage heatmap) |
 | `scripts/analyze_data_tiers.py` | `logs/analyze_data_tiers/<ts>/` (descriptive stats + L2 embedding/env correlation CSVs) | `figs/analyze_data_tiers/<ts>/` (distributions, embedding PCA scatter/correlation plots) |
+| `scripts/analyze_embedding_multivariate.py` | `logs/analyze_embedding_multivariate/<ts>/` (PCA/PLS/CCA/RF/SHAP CSVs, `run_config.json`) | `figs/analyze_embedding_multivariate/<ts>/` (scree, PLS/CCA/RF/UMAP/SHAP plots) |
 | `scripts/diagnose_campaign_missingness.py` | `logs/campaign_missingness/<ts>/` | — |
 | `scripts/summarize_parser_recommendations.py` | reads `logs/campaign_missingness/latest/` by default | — |
 | `scripts/full_diagnostic.py` | — (console-only: variable stats, availability table, known-issue checks) | — |
