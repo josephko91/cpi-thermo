@@ -67,6 +67,17 @@ qv_<instrument>, Sw, Lat, Lon, Alt_m, Campaign, source_file
 ARM, AIRS-II, ATTREX, CRYSTAL-FACE-NASA, CRYSTAL-FACE-UND, ESCAPE, IPHEX, ICE-L,
 ISDAC, MACPEX, MC3E, MIDCIX, MPACE, OLYMPEX, POSIDON
 
+**OLYMPEX, POSIDON, and ESCAPE have L0 env data only — zero rows at L1/L2.**
+`data/raw/cpi_embeddings_timestamps.csv` (the CPI particle-image timestamp
+archive) contains only 12 of the 15 campaigns; these three have no CPI raw
+imagery in this pipeline's inputs at all (not a join bug — see
+`docs/reports/2026-07-08-campaign-breakdown-descriptive-analysis.md` §2).
+They're usable for env/thermodynamic-only analysis but contribute nothing to
+any L2-based CPI-image/morphology analysis. MPACE similarly contributes zero
+L2 rows, for a different reason: it flew no water-vapor instrument, so Si/qv
+are NaN for every record (documented in `config.yaml`), which fails L2's
+core-variable-complete filter on every row.
+
 ## Known issues / active investigations
 
 See `docs/decisions/` for per-investigation records, `docs/sessions/` for
@@ -127,7 +138,9 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 | `scripts/build_data_tiers.py` | `logs/build_data_tiers/<ts>/` (tier_summary.csv) | — |
 | `scripts/diagnose_data_tiers.py` | `logs/diagnose_data_tiers/<ts>/` (row counts + variable coverage CSVs) | `figs/diagnose_data_tiers/<ts>/` (funnel + coverage heatmap) |
 | `scripts/analyze_data_tiers.py` | `logs/analyze_data_tiers/<ts>/` (descriptive stats + L2 embedding/env correlation CSVs) | `figs/analyze_data_tiers/<ts>/` (distributions, embedding PCA scatter/correlation plots) |
+| `scripts/analyze_campaign_breakdown.py` | `logs/analyze_campaign_breakdown/<ts>/` (row counts/share, completeness, funnel retention, date ranges) | `figs/analyze_campaign_breakdown/<ts>/` (row-count bars, funnel retention, completeness heatmaps, date-coverage timeline) |
 | `scripts/analyze_embedding_multivariate.py` | `logs/analyze_embedding_multivariate/<ts>/` (PCA/PLS/CCA/RF/SHAP CSVs, `run_config.json`) | `figs/analyze_embedding_multivariate/<ts>/` (scree, PLS/CCA/RF/UMAP/SHAP plots) |
+| `scripts/visualize_embedding_colorspace.py` | `logs/visualize_embedding_colorspace/<ts>/` (bin stats, subsample coords, `run_config.json`) | `figs/visualize_embedding_colorspace/<ts>/` (PCA/UMAP/t-SNE embedding-color scatter + binned heatmaps over Si-Tair space) |
 | `scripts/diagnose_campaign_missingness.py` | `logs/campaign_missingness/<ts>/` | — |
 | `scripts/summarize_parser_recommendations.py` | reads `logs/campaign_missingness/latest/` by default | — |
 | `scripts/full_diagnostic.py` | — (console-only: variable stats, availability table, known-issue checks) | — |
