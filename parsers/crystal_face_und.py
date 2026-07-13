@@ -124,7 +124,10 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
     if nav_path is not None:
         df_nav = _read_met_cit_file(nav_path)
         nav_cols_to_merge = [
-            c for c in ("Timestamp", "POS_Lat", "POS_Lon", "POS_Alt") if c in df_nav.columns
+            c for c in (
+                "Timestamp", "POS_Lat", "POS_Lon", "POS_Alt",
+                "POS_Pitch", "POS_Roll", "POS_Trk", "POS_Head", "TAS_n",
+            ) if c in df_nav.columns
         ]
         if len(nav_cols_to_merge) > 1:
             # Exact-second outer merge -- no tolerance. Raw headers confirm
@@ -171,6 +174,9 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
         met_cols_to_merge.append(air_temp_col)
     if pres_col_met:
         met_cols_to_merge.append(pres_col_met)
+    for turb_col in ("Wind_Z_Nose", "Wind_M_Nose", "Wind_D_Nose", "TURB"):
+        if turb_col in df_met.columns:
+            met_cols_to_merge.append(turb_col)
 
     if len(met_cols_to_merge) > 1:
         # Exact-second outer merge -- no tolerance, same reasoning as the
@@ -292,6 +298,15 @@ def extract_crystal_face_und_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df.get(lat_col, np.nan) if lat_col else np.nan,
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,
+        "Wind_W_ms": df.get("Wind_Z_Nose", np.nan),
+        "WindSpeed_ms": df.get("Wind_M_Nose", np.nan),
+        "WindDir_deg": df.get("Wind_D_Nose", np.nan),
+        "EDR_und_cm23s1": df.get("TURB", np.nan),
+        "Roll_deg": df.get("POS_Roll", np.nan),
+        "Pitch_deg": df.get("POS_Pitch", np.nan),
+        "Heading_deg": df.get("POS_Head", np.nan),
+        "TrackAngle_deg": df.get("POS_Trk", np.nan),
+        "TAS_ms": df.get("TAS_n", np.nan),
         "Campaign": df.get("Campaign", "CRYSTAL-FACE-UND"),
         "source_file": df["source_file"],
     })

@@ -253,6 +253,27 @@ def load_ice_l_file(
         lon[(lon < -180) | (lon > 180)]         = np.nan
         alt_m[(alt_m < -500) | (alt_m > 25000)] = np.nan
 
+        # ---- Turbulence / wind / attitude (Family C — NCAR/NRC RAF-Nimbus) -
+        # Prefer GPS-corrected wind (WSC/WDC) over the raw variant (WS/WD)
+        # where both exist, same preference as the standard column-naming
+        # doc's guidance. WI/WIC is the vertical wind component.
+        def _pick_1d(candidates: list[str]) -> np.ndarray:
+            name = _pick_var(ds, candidates)
+            if name is None:
+                return np.full(n, np.nan)
+            return _match_length(_to_float_1d(ds[name].values), n)
+
+        wind_w = _pick_1d(["WIC", "WI"])
+        wind_speed = _pick_1d(["WSC", "WS"])
+        wind_dir = _pick_1d(["WDC", "WD"])
+        pitch = _pick_1d(["PITCH"])
+        roll = _pick_1d(["ROLL"])
+        heading = _pick_1d(["THDG"])
+        accel_vert = _pick_1d(["ACINS"])
+        aoa = _pick_1d(["ATTACK", "AKRD"])
+        sideslip = _pick_1d(["SSLIP"])
+        tas = _pick_1d(["TASX", "TAS"])
+
         # ---- Assemble ------------------------------------------------------
         df = pd.DataFrame(
             {
@@ -266,6 +287,16 @@ def load_ice_l_file(
                 "Lat":               lat,
                 "Lon":               lon,
                 "Alt_m":             alt_m,
+                "Wind_W_ms":         wind_w,
+                "WindSpeed_ms":      wind_speed,
+                "WindDir_deg":       wind_dir,
+                "Pitch_deg":         pitch,
+                "Roll_deg":          roll,
+                "Heading_deg":       heading,
+                "Accel_Vert_ms2":    accel_vert,
+                "AngleOfAttack_deg": aoa,
+                "Sideslip_deg":      sideslip,
+                "TAS_ms":            tas,
                 "source_file":       filepath.name,
                 "Campaign":          "ICE-L",
             }
@@ -378,6 +409,16 @@ def extract_ice_l_standard(df: pd.DataFrame) -> pd.DataFrame:
             "Lat":               df.get("Lat",               np.nan),
             "Lon":               df.get("Lon",               np.nan),
             "Alt_m":             df.get("Alt_m",             np.nan),
+            "Wind_W_ms":         df.get("Wind_W_ms",         np.nan),
+            "WindSpeed_ms":      df.get("WindSpeed_ms",      np.nan),
+            "WindDir_deg":       df.get("WindDir_deg",       np.nan),
+            "Pitch_deg":         df.get("Pitch_deg",         np.nan),
+            "Roll_deg":          df.get("Roll_deg",          np.nan),
+            "Heading_deg":       df.get("Heading_deg",       np.nan),
+            "Accel_Vert_ms2":    df.get("Accel_Vert_ms2",    np.nan),
+            "AngleOfAttack_deg": df.get("AngleOfAttack_deg", np.nan),
+            "Sideslip_deg":      df.get("Sideslip_deg",      np.nan),
+            "TAS_ms":            df.get("TAS_ms",            np.nan),
             "Campaign":          df.get("Campaign",          "ICE-L"),
             "source_file":       df.get("source_file",       ""),
         }

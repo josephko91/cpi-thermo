@@ -84,6 +84,7 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
     
     # Column names for MMS data
     columns = ["UT", "P_ALT", "LAT", "LONG", "TAS"]
+    # NOTE: this loader is also imported directly by midcix.py.
     
     # Read data
     df = pd.read_csv(
@@ -129,8 +130,8 @@ def load_mms_file(filepath: Union[str, Path]) -> pd.DataFrame:
         "LONG": "Lon",
         "P_ALT": "Alt_m",
     }, inplace=True)
-    
-    return df[["Timestamp", "Lat", "Lon", "Alt_m"]]
+
+    return df[["Timestamp", "Lat", "Lon", "Alt_m", "TAS"]]
 
 
 def load_np_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -196,7 +197,7 @@ def load_np_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # onward, whereas GPS lat/lon/alt can carry fill values before GPS lock.
     df.rename(columns={"baroalt": "Alt_m", "iLat": "Lat", "iLon": "Lon"}, inplace=True)
 
-    return df[["Timestamp", "Lat", "Lon", "Alt_m"]]
+    return df[["Timestamp", "Lat", "Lon", "Alt_m", "TAS", "gSpd", "trkA", "T_Head", "Pitch", "Roll"]]
 
 
 def load_hw_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -369,7 +370,7 @@ def load_mm_met_file(filepath: Union[str, Path]) -> pd.DataFrame:
     )
     df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
     df["source_file"] = filepath.name
-    return df[["Timestamp", "P_hPa", "T_K", "source_file"]]
+    return df[["Timestamp", "P_hPa", "T_K", "U", "V", "W", "source_file"]]
 
 
 def load_crystal_face_nasa_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -480,7 +481,7 @@ def load_nm_met_file(filepath: Union[str, Path]) -> pd.DataFrame:
     )
     df["Timestamp"] = _round_timestamp_to_second(df["Timestamp"])
     df["source_file"] = filepath.name
-    return df[["Timestamp", "P_hPa", "T_K", "source_file"]]
+    return df[["Timestamp", "P_hPa", "T_K", "WindSpd", "WindDir", "Mach", "source_file"]]
 
 
 def load_crystal_face_nasa(
@@ -827,6 +828,23 @@ def load_crystal_face_nasa(
     else:
         combined["P_hPa"] = np.nan
 
+    # MM met wind vector (Family A, m/s -- already unit-confirmed elsewhere
+    # in this campaign's MMS instrument family). Merged separately from the
+    # P/T fallback logic above so it doesn't disturb that merge's MM/NM
+    # priority handling.
+    if mm_met is not None and {"U", "V", "W"}.issubset(mm_met.columns):
+        wind_data = mm_met[["Timestamp", "U", "V", "W"]].dropna(
+            subset=["U", "V", "W"], how="all"
+        )
+        combined = pd.merge(combined, wind_data, on="Timestamp", how="outer")
+
+    # NM met wind speed/direction + Mach (full-flight fallback source).
+    if nm_met is not None and {"WindSpd", "WindDir", "Mach"}.issubset(nm_met.columns):
+        nm_wind_data = nm_met[["Timestamp", "WindSpd", "WindDir", "Mach"]].dropna(
+            subset=["WindSpd", "WindDir", "Mach"], how="all"
+        )
+        combined = pd.merge(combined, nm_wind_data, on="Timestamp", how="outer")
+
     combined = combined.sort_values("Timestamp").reset_index(drop=True)
     combined["source_file"] = combined.get("source_file", pd.Series(np.nan, index=combined.index)).fillna("")
 
@@ -914,6 +932,17 @@ def extract_crystal_face_nasa_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df.get(lat_col, np.nan) if lat_col else np.nan,
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,
+        "Wind_U_ms": df.get("U", np.nan),
+        "Wind_V_ms": df.get("V", np.nan),
+        "Wind_W_ms": df.get("W", np.nan),
+        "WindSpeed_ms": df.get("WindSpd", np.nan),
+        "WindDir_deg": df.get("WindDir", np.nan),
+        "MachNo": df.get("Mach", np.nan),
+        "Pitch_deg": df.get("Pitch", np.nan),
+        "Roll_deg": df.get("Roll", np.nan),
+        "Heading_deg": df.get("T_Head", np.nan),
+        "TrackAngle_deg": df.get("trkA", np.nan),
+        "TAS_ms": df.get("TAS", np.nan),
         "Campaign": df.get("Campaign", "CRYSTAL-FACE-NASA"),
         "source_file": df.get("source_file", ""),
     })

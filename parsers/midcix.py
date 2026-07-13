@@ -103,7 +103,7 @@ def load_midcix_file(filepath: Union[str, Path]) -> pd.DataFrame:
             # the pipeline's no-fabricated-precision policy.
             df = pd.merge(
                 df,
-                nav_df[["Timestamp", "Lat", "Lon", "Alt_m"]],
+                nav_df[["Timestamp", "Lat", "Lon", "Alt_m", "TAS"]],
                 on="Timestamp",
                 how="outer",
             ).sort_values("Timestamp").reset_index(drop=True)
@@ -239,6 +239,7 @@ def extract_midcix_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df.get(lat_col, np.nan) if lat_col else np.nan,
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,
+        "TAS_ms": df.get("TAS", np.nan),
         "Campaign": df.get("Campaign", "MIDCIX"),
         "source_file": df["source_file"],
     })

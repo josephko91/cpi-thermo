@@ -25,6 +25,20 @@ from pathlib import Path
 from typing import Union
 
 from .utils import es_ice_hPa, qv_from_e_P, sw_from_si
+from typing import Optional
+
+
+def _pick_var(ds: xr.Dataset, candidates: list) -> Optional[str]:
+    """Return the first candidate variable name present in ds, else None.
+
+    Same fallback pattern as ice_l.py's _pick_var, introduced here for
+    consistency instead of the inline ds.get(ds.get(...)) chains this file
+    used previously for LAT/LON/ALT.
+    """
+    for name in candidates:
+        if name in ds.variables:
+            return name
+    return None
 
 
 def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
@@ -111,8 +125,32 @@ def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
             lon = lon[valid_mask]
             alt = alt[valid_mask]
         
+        # Turbulence/wind/attitude (Family C — same NCAR/NRC RAF-Nimbus
+        # variable set as ICE-L). Applies the same valid_mask (RH <= 200%)
+        # used for the rest of this file's fields, since these variables
+        # come from the same per-sample netCDF arrays.
+        def _pick_1d(candidates: list) -> np.ndarray:
+            name = _pick_var(ds, candidates)
+            if name is None:
+                return np.full(len(valid_mask), np.nan)
+            arr = np.asarray(ds[name].values).ravel().astype(float)
+            if len(arr) == len(valid_mask):
+                arr = arr[valid_mask]
+            return arr
+
+        wind_w = _pick_1d(["WIC", "WI"])
+        wind_speed = _pick_1d(["WSC", "WS"])
+        wind_dir = _pick_1d(["WDC", "WD"])
+        pitch = _pick_1d(["PITCH"])
+        roll = _pick_1d(["ROLL"])
+        heading = _pick_1d(["THDG"])
+        accel_vert = _pick_1d(["ACINS"])
+        aoa = _pick_1d(["ATTACK", "AKRD"])
+        sideslip = _pick_1d(["SSLIP"])
+        tas = _pick_1d(["TASX", "TAS"])
+
         n = min(len(times), len(rh), len(atx))
-        
+
         df = pd.DataFrame({
             "Timestamp": pd.to_datetime(times[:n], utc=True),
             "RHUM": rh[:n],
@@ -121,6 +159,16 @@ def load_airs_ii_file(filepath: Union[str, Path]) -> pd.DataFrame:
             "Lat": lat[:n] if len(lat) >= n else np.nan,
             "Lon": lon[:n] if len(lon) >= n else np.nan,
             "Alt_m": alt[:n] if len(alt) >= n else np.nan,
+            "Wind_W_ms": wind_w[:n] if len(wind_w) >= n else np.nan,
+            "WindSpeed_ms": wind_speed[:n] if len(wind_speed) >= n else np.nan,
+            "WindDir_deg": wind_dir[:n] if len(wind_dir) >= n else np.nan,
+            "Pitch_deg": pitch[:n] if len(pitch) >= n else np.nan,
+            "Roll_deg": roll[:n] if len(roll) >= n else np.nan,
+            "Heading_deg": heading[:n] if len(heading) >= n else np.nan,
+            "Accel_Vert_ms2": accel_vert[:n] if len(accel_vert) >= n else np.nan,
+            "AngleOfAttack_deg": aoa[:n] if len(aoa) >= n else np.nan,
+            "Sideslip_deg": sideslip[:n] if len(sideslip) >= n else np.nan,
+            "TAS_ms": tas[:n] if len(tas) >= n else np.nan,
         })
 
         df = df.sort_values("Timestamp").reset_index(drop=True)
@@ -220,6 +268,16 @@ def extract_airs_ii_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df.get("Lat", np.nan),
         "Lon": df.get("Lon", np.nan),
         "Alt_m": df.get("Alt_m", np.nan),
+        "Wind_W_ms": df.get("Wind_W_ms", np.nan),
+        "WindSpeed_ms": df.get("WindSpeed_ms", np.nan),
+        "WindDir_deg": df.get("WindDir_deg", np.nan),
+        "Pitch_deg": df.get("Pitch_deg", np.nan),
+        "Roll_deg": df.get("Roll_deg", np.nan),
+        "Heading_deg": df.get("Heading_deg", np.nan),
+        "Accel_Vert_ms2": df.get("Accel_Vert_ms2", np.nan),
+        "AngleOfAttack_deg": df.get("AngleOfAttack_deg", np.nan),
+        "Sideslip_deg": df.get("Sideslip_deg", np.nan),
+        "TAS_ms": df.get("TAS_ms", np.nan),
         "Campaign": df.get("Campaign", "AIRS-II"),
         "source_file": df["source_file"],
     })
