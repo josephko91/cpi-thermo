@@ -51,7 +51,7 @@ from typing import List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si
+from .utils import es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv, edr_from_und_cm23s1
 
 
 IPHEX_INVALID_VALUES = {
@@ -396,6 +396,12 @@ def extract_iphex_standard(df: pd.DataFrame) -> pd.DataFrame:
     # Sw from Si and T
     sw = sw_from_si(df.get("Si", np.nan), df.get("Air_Temp", np.nan))
 
+    # Wind_D is undocumented in this campaign's raw header; assumed standard
+    # meteorological "from" convention (clockwise from north).
+    wind_u, wind_v = wind_speed_dir_to_uv(
+        df.get("Wind_M", np.nan), df.get("Wind_D", np.nan)
+    )
+
     return pd.DataFrame(
         {
             "Timestamp": df.get("Timestamp", pd.NaT),
@@ -413,19 +419,9 @@ def extract_iphex_standard(df: pd.DataFrame) -> pd.DataFrame:
             "Lon": df.get("POS_Lon", np.nan),
             "Alt_m": df.get("POS_Alt", np.nan),
             "Wind_W_ms": df.get("Wind_Z", np.nan),
-            "WindSpeed_ms": df.get("Wind_M", np.nan),
-            "WindDir_deg": df.get("Wind_D", np.nan),
-            "EDR_und_cm23s1": df.get("TURB", np.nan),
-            "Roll_deg": df.get("POS_Roll", np.nan),
-            "Pitch_deg": df.get("POS_Pitch", np.nan),
-            "Heading_deg": df.get("POS_Head", np.nan),
-            "Accel_Vert_ms2": df.get("POSZ_Acc", np.nan),
-            "AngleOfAttack_deg": df.get("Alpha", np.nan),
-            "Sideslip_deg": df.get("Beta", np.nan),
-            "VertVel_ms": df.get("VERT_VEL", np.nan),
-            "TAS_ms": df.get("TAS", np.nan),
-            "IAS_ms": df.get("IAS", np.nan),
-            "MachNo": df.get("MachNo_N", np.nan),
+            "Wind_U_ms": wind_u,
+            "Wind_V_ms": wind_v,
+            "EDR_m23s1": edr_from_und_cm23s1(df.get("TURB", np.nan)),
             "Campaign": df.get("Campaign", "IPHEX"),
             "source_file": df.get("source_file", ""),
         }

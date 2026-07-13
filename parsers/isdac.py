@@ -40,7 +40,7 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import es_ice_hPa, qv_from_e_P, sw_from_si
+from .utils import es_ice_hPa, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +343,12 @@ def extract_isdac_standard(df: pd.DataFrame) -> pd.DataFrame:
     # Sw from Si and T
     sw = sw_from_si(df.get("Si", np.nan), df.get("RSTem", np.nan))
 
+    # MWDir is undocumented in this campaign's raw header; assumed standard
+    # meteorological "from" convention (clockwise from north).
+    wind_u, wind_v = wind_speed_dir_to_uv(
+        df.get("MWSpd", np.nan), df.get("MWDir", np.nan)
+    )
+
     return pd.DataFrame(
         {
             "Timestamp": df.get("Timestamp", pd.NaT),
@@ -356,16 +362,9 @@ def extract_isdac_standard(df: pd.DataFrame) -> pd.DataFrame:
             "Lat": df.get("MastrLAT", np.nan),
             "Lon": df.get("MasterLON", np.nan),
             "Alt_m": df.get("PreAlt", np.nan),
-            "AngleOfAttack_deg": df.get("ALPHA", np.nan),
-            "Sideslip_deg": df.get("BETA", np.nan),
-            "Pitch_deg": df.get("PITCH", np.nan),
-            "Roll_deg": df.get("ROLL", np.nan),
-            "Heading_deg": df.get("HDG", np.nan),
-            "WindSpeed_ms": df.get("MWSpd", np.nan),
-            "WindDir_deg": df.get("MWDir", np.nan),
+            "Wind_U_ms": wind_u,
+            "Wind_V_ms": wind_v,
             "Wind_W_ms": df.get("VWND_P", np.nan),
-            "DriftAngle_deg": df.get("driftA", np.nan),
-            "TrackAngle_deg": df.get("TRK", np.nan),
             "Campaign": df.get("Campaign", "ISDAC"),
             "source_file": df.get("source_file", ""),
         }

@@ -20,10 +20,12 @@ from .utils import (
     clean_column_name,
     extract_takeoff_date,
     si_from_rh,
+    edr_from_und_cm23s1,
     es_ice_hPa,
     qv_from_e_P,
     sw_from_si,
     round_timestamp_to_second,
+    wind_speed_dir_to_uv,
     COMMON_NA_VALUES,
 )
 
@@ -126,7 +128,6 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
         nav_cols_to_merge = [
             c for c in (
                 "Timestamp", "POS_Lat", "POS_Lon", "POS_Alt",
-                "POS_Pitch", "POS_Roll", "POS_Trk", "POS_Head", "TAS_n",
             ) if c in df_nav.columns
         ]
         if len(nav_cols_to_merge) > 1:
@@ -285,6 +286,12 @@ def extract_crystal_face_und_standard(df: pd.DataFrame) -> pd.DataFrame:
     # Sw from Si and T
     sw = sw_from_si(df.get("Si", np.nan), df.get("Tair", np.nan))
 
+    # Wind_D_Nose is undocumented in this campaign's raw header; assumed
+    # standard meteorological "from" convention (clockwise from north).
+    wind_u, wind_v = wind_speed_dir_to_uv(
+        df.get("Wind_M_Nose", np.nan), df.get("Wind_D_Nose", np.nan)
+    )
+
     return pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df.get("Tair", np.nan),
@@ -299,14 +306,9 @@ def extract_crystal_face_und_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,
         "Wind_W_ms": df.get("Wind_Z_Nose", np.nan),
-        "WindSpeed_ms": df.get("Wind_M_Nose", np.nan),
-        "WindDir_deg": df.get("Wind_D_Nose", np.nan),
-        "EDR_und_cm23s1": df.get("TURB", np.nan),
-        "Roll_deg": df.get("POS_Roll", np.nan),
-        "Pitch_deg": df.get("POS_Pitch", np.nan),
-        "Heading_deg": df.get("POS_Head", np.nan),
-        "TrackAngle_deg": df.get("POS_Trk", np.nan),
-        "TAS_ms": df.get("TAS_n", np.nan),
+        "Wind_U_ms": wind_u,
+        "Wind_V_ms": wind_v,
+        "EDR_m23s1": edr_from_und_cm23s1(df.get("TURB", np.nan)),
         "Campaign": df.get("Campaign", "CRYSTAL-FACE-UND"),
         "source_file": df["source_file"],
     })

@@ -55,7 +55,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from .utils import si_from_rh, si_from_ppmv, es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si
+from .utils import si_from_rh, si_from_ppmv, es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv
 
 
 ICE_L_FILE_RE = re.compile(
@@ -266,13 +266,9 @@ def load_ice_l_file(
         wind_w = _pick_1d(["WIC", "WI"])
         wind_speed = _pick_1d(["WSC", "WS"])
         wind_dir = _pick_1d(["WDC", "WD"])
-        pitch = _pick_1d(["PITCH"])
-        roll = _pick_1d(["ROLL"])
-        heading = _pick_1d(["THDG"])
-        accel_vert = _pick_1d(["ACINS"])
-        aoa = _pick_1d(["ATTACK", "AKRD"])
-        sideslip = _pick_1d(["SSLIP"])
-        tas = _pick_1d(["TASX", "TAS"])
+        # NCAR RAF-Nimbus WD/WDC is documented as standard meteorological wind
+        # direction (FROM, clockwise from north).
+        wind_u, wind_v = wind_speed_dir_to_uv(wind_speed, wind_dir)
 
         # ---- Assemble ------------------------------------------------------
         df = pd.DataFrame(
@@ -288,15 +284,8 @@ def load_ice_l_file(
                 "Lon":               lon,
                 "Alt_m":             alt_m,
                 "Wind_W_ms":         wind_w,
-                "WindSpeed_ms":      wind_speed,
-                "WindDir_deg":       wind_dir,
-                "Pitch_deg":         pitch,
-                "Roll_deg":          roll,
-                "Heading_deg":       heading,
-                "Accel_Vert_ms2":    accel_vert,
-                "AngleOfAttack_deg": aoa,
-                "Sideslip_deg":      sideslip,
-                "TAS_ms":            tas,
+                "Wind_U_ms":         wind_u,
+                "Wind_V_ms":         wind_v,
                 "source_file":       filepath.name,
                 "Campaign":          "ICE-L",
             }
@@ -410,15 +399,8 @@ def extract_ice_l_standard(df: pd.DataFrame) -> pd.DataFrame:
             "Lon":               df.get("Lon",               np.nan),
             "Alt_m":             df.get("Alt_m",             np.nan),
             "Wind_W_ms":         df.get("Wind_W_ms",         np.nan),
-            "WindSpeed_ms":      df.get("WindSpeed_ms",      np.nan),
-            "WindDir_deg":       df.get("WindDir_deg",       np.nan),
-            "Pitch_deg":         df.get("Pitch_deg",         np.nan),
-            "Roll_deg":          df.get("Roll_deg",          np.nan),
-            "Heading_deg":       df.get("Heading_deg",       np.nan),
-            "Accel_Vert_ms2":    df.get("Accel_Vert_ms2",    np.nan),
-            "AngleOfAttack_deg": df.get("AngleOfAttack_deg", np.nan),
-            "Sideslip_deg":      df.get("Sideslip_deg",      np.nan),
-            "TAS_ms":            df.get("TAS_ms",            np.nan),
+            "Wind_U_ms":         df.get("Wind_U_ms",         np.nan),
+            "Wind_V_ms":         df.get("Wind_V_ms",         np.nan),
             "Campaign":          df.get("Campaign",          "ICE-L"),
             "source_file":       df.get("source_file",       ""),
         }

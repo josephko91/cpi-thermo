@@ -269,15 +269,13 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
     lat_col = _choose_column(df, ["Lat", "Latitude", "GPS_Lat"])
     lon_col = _choose_column(df, ["Long", "Lon", "Longitude", "GPS_Lon"])
     time_col = _choose_column(df, ["Time_Start", "Time", "UTC", "Time_UTC"])
-    # Vertical air velocity, heading, true airspeed — never isolated by name
-    # before this (load_escape_file previously returned the whole raw df
-    # untouched for these three). Same _choose_column lookup pattern as the
-    # temp/pressure/position columns above.
+    # Vertical air velocity — never isolated by name before this
+    # (load_escape_file previously returned the whole raw df untouched for
+    # this). Same _choose_column lookup pattern as the temp/pressure/position
+    # columns above.
     vav_col = _choose_column(df, ["VaV", "Vertical_Air_Velocity", "Wz"])
-    hdg_col = _choose_column(df, ["Hdg", "Heading", "True_Heading"])
-    tas_col = _choose_column(df, ["TAS", "True_Air_Speed", "TASX"])
 
-    _coerce_numeric(df, [temp_col, dew_col, pres_col, alt_col, lat_col, lon_col, time_col, vav_col, hdg_col, tas_col])
+    _coerce_numeric(df, [temp_col, dew_col, pres_col, alt_col, lat_col, lon_col, time_col, vav_col])
 
     # Unit normalization
     if temp_col:
@@ -395,11 +393,6 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
     df["Lon"] = df[lon_col] if lon_col else np.nan
     df["Alt_m"] = df[alt_col] if alt_col else np.nan
     df["Wind_W_ms"] = df[vav_col] if vav_col else np.nan
-    df["Heading_deg"] = df[hdg_col] if hdg_col else np.nan
-    # TAS units unconfirmed for this source (ESCAPE Learjet ICT header
-    # doesn't label knots vs m/s the way MPACE's does) — pass through
-    # as-is per the plan; do not assume a conversion.
-    df["TAS_ms"] = df[tas_col] if tas_col else np.nan
     df["source_file"] = filepath.name
     df["Campaign"] = "ESCAPE"
 
@@ -460,8 +453,6 @@ def extract_escape_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lon": df.get("Lon", np.nan),
         "Alt_m": df.get("Alt_m", np.nan),
         "Wind_W_ms": df.get("Wind_W_ms", np.nan),
-        "Heading_deg": df.get("Heading_deg", np.nan),
-        "TAS_ms": df.get("TAS_ms", np.nan),
         "Campaign": df.get("Campaign", "ESCAPE"),
         "source_file": df.get("source_file", ""),
     })
