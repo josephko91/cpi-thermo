@@ -19,6 +19,69 @@ engineering logs.
 
 ---
 
+## 2026-07-13 — Phase 1 turbulence columns added; ARM L0 now floored to 1 Hz (was native 4 Hz)
+
+**See:** `docs/todo/2026-07-13-turbulence-measurements-plan.md`,
+`docs/decisions/2026-07-13-turbulence-schema.md`.
+**Campaigns:** 15 (no change). **Schema:** +22 columns (wind, attitude,
+angle-of-attack/sideslip, true/indicated airspeed, EDR). **Rows:** total L0
+row count drops from ~5.0M to 4,572,581 — entirely attributable to the ARM
+row-count change below; every other campaign's row count is unchanged.
+
+Adds wind vector, aircraft attitude, angle-of-attack/sideslip, true/indicated
+airspeed, Mach number, and EDR (eddy dissipation rate) columns for 9
+campaigns (ARM, ATTREX, POSIDON, MACPEX, IPHEX, MC3E, MPACE, OLYMPEX, ISDAC).
+These fields were already being read into each parser's intermediate
+DataFrame but dropped at the final `extract_*_standard()` step. See
+`config.yaml`'s `output.standardized_columns` for the full list and
+per-campaign provenance.
+
+EDR is deliberately kept as separate, never-unified columns
+(`EDR_mms_log10kWkg`, `EDR_und_cm23s1` [+ `_nose` for MPACE],
+`EDR_arm`) rather than one merged column — different instruments/pipelines,
+not just different units of one quantity. See
+`docs/decisions/2026-07-13-turbulence-schema.md` for the full rationale.
+
+**ARM L0 row-count change (supersedes part of the 2026-07-07 entry below):**
+the 2026-07-07 fix explicitly deduped ARM to 1 Hz *only inside `build_l1()`*,
+leaving L0 at ARM's native 4 Hz. This change moves that flooring into
+`load_arm_file()` itself (matching the plan's explicit instruction to apply
+it "to the whole load_arm_file output, not just new turbulence columns"),
+so **L0 itself is no longer untouched for ARM**: 567,760 rows (native 4 Hz,
+confirmed by re-running `main.py --campaigns ARM` against the prior commit)
+→ 141,940 rows (floored 1 Hz, first real sample per second, never averaged).
+Side effect worth flagging: ARM's pre-existing GPS-altitude stuck-run
+detector (`STUCK_RUN_LENGTH = 30` samples) now operates on the 1 Hz stream
+instead of 4 Hz, so its effective detection window changes from ~7.5s to
+30s — the code's own comment already claimed 30s was the intent ("matching
+qa_checks.py QC3's own stuck-sensor threshold"), so this is a correction of
+a pre-existing miscalibration rather than a new bug, but it does mean a
+7.5–30s GPS freeze that previously triggered a fallback to
+`Pressure_Altitude_m` no longer does.
+
+**Known follow-ups (not yet fixed, tracked from code review):**
+- ARM is missing `WindSpeed_ms`/`WindDir_deg`/`TAS_ms`/`Roll_deg`/`Pitch_deg`/`Heading_deg`
+  even though the raw binary already has ready-named columns for all of them
+  (`ARM_COLUMNS` in `parsers/arm.py`) — only `Wind_W_ms`/`EDR_arm` were wired up.
+- ATTREX/POSIDON's `EDR_mms_log10kWkg`/`REYN_mms` use the same x0.01 MMS
+  integer-scale as T/P/Heading, confirmed for Heading (raw maxes at exactly
+  36000) but not independently confirmed for EDR/REYN specifically — values
+  are physically plausible but the scale is asserted by analogy, not a
+  header citation.
+- New turbulence columns in IPHEX/MPACE (and likely MC3E/OLYMPEX) bypass
+  the existing fill-value sentinel masking (`-9999`/`-7777`/`-8888` family)
+  applied to other columns in the same files — no corruption found in the
+  current build, but the path is unguarded.
+- `HARD_BOUNDS` in `scripts/qa_checks.py` uses one global, campaign-agnostic
+  Roll/Pitch range, which can't catch a per-family sign-convention inversion.
+
+Phase 2 (`crystal_face_und.py`, `crystal_face_nasa.py`, `midcix.py`,
+`escape.py` — needs upstream loader/merge-list changes) and Phase 3
+(`ice_l.py`, `airs_ii.py`, ISDAC's unused 5 Hz source — new NetCDF read
+paths) are not yet implemented.
+
+---
+
 ## 2026-07-07 — L1 fixed to one row per CPI image (was collapsing ~30 images/second into 1)
 
 **See:** `scripts/build_data_tiers.py::build_l1()`.
