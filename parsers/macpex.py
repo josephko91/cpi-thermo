@@ -104,6 +104,7 @@ MMS_P_SCALE = 0.10   # raw integer × 0.10 → hPa
 #: "1.0, 0.001, 0.001, 0.1" for P_ALT, LAT, LONG, TAS respectively).
 MMS_ALT_SCALE = 1.0     # raw integer × 1.0   → metres (already unscaled)
 MMS_LATLON_SCALE = 0.001  # raw integer × 0.001 → degrees
+MMS_TAS_SCALE = 0.1     # raw integer × 0.1   → m/s (distinct from MMS-Met's 0.01 T scale -- different instrument file)
 
 #: Preferred water-vapor source column names after instrument-prefix renaming.
 #: These names must cover both short and long folder-name variants (the prefix
@@ -743,6 +744,13 @@ def extract_macpex_standard(df: pd.DataFrame) -> pd.DataFrame:
     # Sw from Si and T_C
     sw = sw_from_si(df.get("Si", np.nan), df.get("T_C", np.nan))
 
+    # Wind (MMS-Met) and TAS (MMS-FlightPath) -- no EDR/attitude archived for
+    # this campaign per the turbulence-measurements survey.
+    u_col = _find_mms_col(df, "U")
+    v_col = _find_mms_col(df, "V")
+    w_col = _find_mms_col(df, "W")
+    tas_col = _find_col(df, ["MMS-FlightPath_TAS"])
+
     return pd.DataFrame({
         "Timestamp":  df.get("Timestamp", pd.NaT),
         "Tair_C":     df.get("T_C", np.nan),
@@ -760,6 +768,14 @@ def extract_macpex_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat":        df[lat_col] if lat_col else np.nan,
         "Lon":        df[lon_col] if lon_col else np.nan,
         "Alt_m":      df[alt_col] if alt_col else np.nan,
+        # MMS-Met wind is a scaled integer (x 0.01, same convention as this
+        # file's MMS_T_SCALE); MMS-FlightPath TAS uses its own documented
+        # 0.1 scale (MMS_TAS_SCALE) -- a different instrument file, not the
+        # same scale as MMS-Met. Confirmed against raw value ranges.
+        "Wind_U_ms":  df[u_col] * 0.01 if u_col else np.nan,
+        "Wind_V_ms":  df[v_col] * 0.01 if v_col else np.nan,
+        "Wind_W_ms":  df[w_col] * 0.01 if w_col else np.nan,
+        "TAS_ms":     df[tas_col] * MMS_TAS_SCALE if tas_col else np.nan,
         "Campaign":   df.get("Campaign", "MACPEX"),
         "source_file": source,
     })

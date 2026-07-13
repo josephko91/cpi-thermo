@@ -186,6 +186,32 @@ def round_timestamp_to_second(series: pd.Series) -> pd.Series:
 
 
 # =============================================================================
+# Wind / Attitude / Airspeed Utilities
+# =============================================================================
+
+def knots_to_ms(knots: np.ndarray) -> np.ndarray:
+    """Convert knots to m/s. Apply only where a file's own header confirms knots."""
+    return np.asarray(knots, dtype=float) * 0.514444
+
+
+def first_per_second(df: pd.DataFrame, ts_col: str = "Timestamp") -> pd.DataFrame:
+    """Floor timestamps to whole seconds and keep the first sample per second.
+
+    Factors out the round_timestamp_to_second -> dropna -> drop_duplicates
+    idiom used when a raw source is sampled denser than 1 Hz and needs to be
+    floored onto the pipeline's 1 Hz exact-second-merge grid. Takes the first
+    actually-observed sample per second rather than averaging, since a mean
+    across sub-second samples would synthesize a value that never existed at
+    any single instant -- worse for a genuinely fluctuating turbulence
+    quantity than picking one real observation.
+    """
+    df = df.copy()
+    df[ts_col] = round_timestamp_to_second(df[ts_col])
+    df = df.dropna(subset=[ts_col]).drop_duplicates(subset=[ts_col], keep="first")
+    return df
+
+
+# =============================================================================
 # Column Name Utilities
 # =============================================================================
 

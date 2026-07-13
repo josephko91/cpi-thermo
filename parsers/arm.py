@@ -17,7 +17,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Union, List, Optional
 
-from .utils import si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si
+from .utils import si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si, first_per_second
 
 
 # Column definitions for ARM binary files
@@ -206,6 +206,12 @@ def load_arm_file(filepath: Union[str, Path]) -> pd.DataFrame:
     df["Timestamp"] = df["Date"] + pd.to_timedelta(df["Time_sec"], unit="s")
     df["Timestamp"] = df["Timestamp"].dt.tz_localize("UTC")
 
+    # ARM's raw source is 4 Hz; floor onto the pipeline's 1 Hz exact-second
+    # merge grid, keeping the first real sample per second (never averaged --
+    # see first_per_second docstring). This changes ARM's row count from the
+    # pre-existing 4 Hz-duplicated-Timestamp rows to true 1 Hz rows.
+    df = first_per_second(df, ts_col="Timestamp")
+
     # ------------------------------------------------------------------ #
     # Derived thermodynamic quantities                                     #
     # ------------------------------------------------------------------ #
@@ -342,6 +348,8 @@ def extract_arm_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df["GPS_Lat_deg"],
         "Lon": df["GPS_Lon_deg"],
         "Alt_m": df.get("Alt_m", df["GPS_Alt_m"]),
+        "Wind_W_ms": df.get("Vertical_Wind_m_s", np.nan),
+        "EDR_arm": df.get("Turbulence_eps", np.nan),
         "Campaign": df.get("Campaign", "ARM"),
         "source_file": df["source_file"],
     })

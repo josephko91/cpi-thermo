@@ -226,6 +226,25 @@ def extract_mpace_standard(df: pd.DataFrame) -> pd.DataFrame:
             "Lat": df.get("POS_Lat", np.nan),
             "Lon": df.get("POS_Lon", np.nan),
             "Alt_m": df.get("POS_Alt", np.nan),
+            # MPACE's only wind vector is from the nose boom (no separate
+            # wing-mounted wind channel exists in this archive's 49 columns).
+            "Wind_W_ms": df.get("Wind_Z_Nose", np.nan),
+            "WindSpeed_ms": df.get("Wind_M_Nose", np.nan),
+            "WindDir_deg": df.get("Wind_D_Nose", np.nan),
+            "Roll_deg": df.get("POS_Roll", np.nan),
+            "Pitch_deg": df.get("POS_Pitch", np.nan),
+            "Heading_deg": df.get("POS_Head", np.nan),
+            "Accel_Vert_ms2": df.get("POSZ_Acc", np.nan),
+            "AngleOfAttack_deg": df.get("Alpha", np.nan),
+            "Sideslip_deg": df.get("Beta", np.nan),
+            "VertVel_ms": df.get("VERT_VEL", np.nan),
+            "TAS_ms": df.get("TAS", np.nan),
+            # EDR is the one genuinely dual-channel field here (wing primary,
+            # nose kept as a campaign-local extra -- do not average/unify).
+            "EDR_und_cm23s1": df.get("TURB", np.nan),
+            "EDR_und_cm23s1_nose": df.get("TURB_n", np.nan),
+            "IAS_ms": df.get("IAS_w", np.nan),
+            "IAS_ms_nose": df.get("IAS_n", np.nan),
             "Campaign": df.get("Campaign", "MPACE"),
             "source_file": df.get("source_file", ""),
         }
