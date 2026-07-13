@@ -341,6 +341,20 @@ def extract_posidon_standard(
     out["Lon"]   = df.get("MMS-1HZ_G_LONG", np.nan) * COEF_LON
     out["Alt_m"] = df.get("MMS-1HZ_G_ALT",  np.nan) * COEF_ALT
 
+    # Wind / attitude / EDR (identical MMS instrument to ATTREX). Raw values
+    # are scaled integers (× 0.01), same ICARTT convention as MMS-1HZ_T/_P
+    # above -- confirmed by raw ranges (e.g. Heading_deg raw maxes at exactly
+    # 36000 == 360.00 x 100).
+    out["Wind_U_ms"] = df.get("MMS-1HZ_U", np.nan) * 0.01
+    out["Wind_V_ms"] = df.get("MMS-1HZ_V", np.nan) * 0.01
+    out["Wind_W_ms"] = df.get("MMS-1HZ_W", np.nan) * 0.01
+    out["TAS_ms"] = df.get("MMS-1HZ_TAS", np.nan) * 0.01
+    out["Roll_deg"] = df.get("MMS-1HZ_ROLL", np.nan) * 0.01
+    out["Pitch_deg"] = df.get("MMS-1HZ_PITCH", np.nan) * 0.01
+    out["Heading_deg"] = df.get("MMS-1HZ_HDG", np.nan) * 0.01
+    out["EDR_mms_log10kWkg"] = df.get("MMS-1HZ_TEDR", np.nan) * 0.01
+    out["REYN_mms"] = df.get("MMS-1HZ_REYN", np.nan) * 0.01
+
     out["Campaign"] = campaign
 
     return out.reset_index(drop=True)

@@ -603,6 +603,18 @@ def extract_attrex_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df[lat_col] if lat_col else np.nan,
         "Lon": df[lon_col] if lon_col else np.nan,
         "Alt_m": df[alt_col] if alt_col else np.nan,
+        # MMS-1HZ stores these as scaled integers (× 0.01), same convention
+        # documented/applied for MMS T and P above -- confirmed by raw ranges
+        # (e.g. Heading_deg raw maxes at exactly 36000 == 360.00 x 100).
+        "Wind_U_ms": _get("MMS_U") * 0.01,
+        "Wind_V_ms": _get("MMS_V") * 0.01,
+        "Wind_W_ms": _get("MMS_W") * 0.01,
+        "TAS_ms": _get("MMS_TAS") * 0.01,
+        "Roll_deg": _get("MMS_ROLL") * 0.01,
+        "Pitch_deg": _get("MMS_PITCH") * 0.01,
+        "Heading_deg": _get("MMS_HDG") * 0.01,
+        "EDR_mms_log10kWkg": _get("MMS_TEDR") * 0.01,
+        "REYN_mms": _get("MMS_REYN") * 0.01,
         "Campaign": df.get("Campaign", "ATTREX"),
         "source_file": source,
     })
