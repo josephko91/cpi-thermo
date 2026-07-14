@@ -51,7 +51,7 @@ TURBULENCE_COLS = [
 EDR_SOURCE_CAMPAIGNS = {
     "NASA Ames MMS (converted from log10 kW/kg)": ["ATTREX", "POSIDON"],
     "UND ASCII pipeline (converted from cm^(2/3)s^-1)": ["IPHEX", "MC3E", "MPACE", "OLYMPEX", "CRYSTAL-FACE-UND"],
-    "ARM / UND Citation binary (already eps^(1/3) in meters)": ["ARM"],
+    "ARM / UND Citation binary (converted from cm^(2/3)s^-1)": ["ARM"],
 }
 
 

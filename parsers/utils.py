@@ -203,8 +203,10 @@ def wind_speed_dir_to_uv(speed, direction_deg):
 # =============================================================================
 # Both conversions below produce the ICAO/WMO-standard EDR quantity,
 # eps^(1/3) in m^(2/3)*s^-1 -- see docs/decisions/2026-07-13-edr-unification.md.
-# ARM needs no conversion function: data/raw/ARM/poellot-citation-t4-readme.txt
-# confirms its Turbulence_eps field is already eps^(1/3) in meters.
+# ARM uses edr_from_und_cm23s1 too: its raw Turbulence_eps field is
+# eps^(1/3) but in the same cm^(2/3)*s^-1 house convention as the later UND
+# ASCII pipeline (same aircraft/team), confirmed by value-range comparison,
+# not by an explicit unit in ARM's own readme.
 
 _CM_TO_M_23 = 100.0 ** (2.0 / 3.0)  # cm^(2/3) -> m^(2/3), ~21.544
 

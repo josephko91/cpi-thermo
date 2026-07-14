@@ -17,7 +17,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Union, List, Optional
 
-from .utils import si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si, first_per_second
+from .utils import si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si, first_per_second, edr_from_und_cm23s1
 
 
 # Column definitions for ARM binary files
@@ -349,13 +349,18 @@ def extract_arm_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lon": df["GPS_Lon_deg"],
         "Alt_m": df.get("Alt_m", df["GPS_Alt_m"]),
         "Wind_W_ms": df.get("Vertical_Wind_m_s", np.nan),
-        # Turbulence_eps is already eps^(1/3) in m^(2/3)*s^-1 (confirmed by
-        # data/raw/ARM/poellot-citation-t4-readme.txt field 18: "Turbulence
-        # / epsilon**1/3" -- same UND Citation II aircraft/team as the
-        # IPHEX/MC3E/MPACE/OLYMPEX/CRYSTAL-FACE-UND EDR_m23s1 sources, all
-        # SI meters in this readme, no scaling needed beyond the generic
-        # raw/1000-100 decode already applied above.
-        "EDR_m23s1": df.get("Turbulence_eps", np.nan),
+        # Turbulence_eps is eps^(1/3) (data/raw/ARM/poellot-citation-t4-readme.txt
+        # field 18: "Turbulence / epsilon**1/3"), but that readme's units
+        # column names the quantity, not its length unit. Value-range check
+        # settled it: as raw meters, median lands at 0.57 m^(2/3)*s^-1 --
+        # implying HALF of all ARM records are at/above ICAO's severe-
+        # turbulence threshold, physically implausible for routine flight.
+        # Divided by the same cm->m factor as the later UND ASCII pipeline
+        # (same UND Citation II team/aircraft, same house cm convention),
+        # the median drops to 0.027 and max to 2.4 -- squarely matching the
+        # UND ASCII campaigns' EDR_m23s1 range. See
+        # docs/decisions/2026-07-13-edr-unification.md.
+        "EDR_m23s1": edr_from_und_cm23s1(df.get("Turbulence_eps", np.nan)),
         "Campaign": df.get("Campaign", "ARM"),
         "source_file": df["source_file"],
     })

@@ -30,21 +30,27 @@ located and confirmed, and folded in too.
   CRYSTAL-FACE-UND): already eps^(1/3), just in cm^(2/3)*s^-1 instead of
   m^(2/3)*s^-1 — a pure length-unit conversion, not a processing-pipeline
   assumption.
-- **ARM `Turbulence_eps`**: confirmed via
-  `data/raw/ARM/poellot-citation-t4-readme.txt` (the instrument team's own
-  data-format README for this file), field 18: `Turbulence — epsilon**1/3`.
-  ARM's data comes from the **same UND Citation II aircraft/team** as the
-  IPHEX/MC3E/MPACE/OLYMPEX/CRYSTAL-FACE-UND campaigns, just an older binary
-  (`.t4archive.gz`) processing generation instead of the later ASCII
-  pipeline. Every other variable in that same README is explicit SI
-  (meters/sec, millibars, Celsius — no centimeters anywhere), so
-  `Turbulence_eps` is eps^(1/3) already in **meters**, not centimeters —
-  no length-unit conversion needed beyond the file's generic
-  `raw/1000 - 100` integer decode (already applied to all 39 fields).
-  Confirmed further by value distribution: ARM's raw values (median 0.57,
-  IQR 0.29-1.18) land exactly in the ICAO moderate/severe eps^(1/3) band,
-  with no discontinuous sentinel cluster (unlike the MMS TEDR fill-flag bug
-  found below).
+- **ARM `Turbulence_eps`**: `data/raw/ARM/poellot-citation-t4-readme.txt`
+  (the instrument team's own data-format README) confirms field 18 is
+  `Turbulence — epsilon**1/3`, but that column names the *quantity*, not
+  its *length unit* — unlike every other row in the README, which pairs
+  the variable with an explicit unit (meters/sec, millibars, Celsius).
+  First pass assumed "no cm anywhere in this doc → must be meters" and
+  used the raw value as-is; that was wrong, caught by an all-campaigns
+  distribution plot (`figs/all-campaigns/*/13_edr_distributions.png`)
+  showing ARM wildly skewed high vs. every other campaign. As raw meters,
+  ARM's median was 0.57 m^(2/3)*s^-1 — implying **half of all ARM
+  records sit at or above ICAO's severe-turbulence threshold**, physically
+  implausible for routine research flight (aircraft don't fly in severe
+  turbulence as their typical condition). ARM's data comes from the
+  **same UND Citation II aircraft/team** as IPHEX/MC3E/MPACE/OLYMPEX/
+  CRYSTAL-FACE-UND, just an older binary (`.t4archive.gz`) archive
+  instead of the later ASCII pipeline — applying the *same*
+  cm^(2/3)*s^-1-to-meters conversion used for that ASCII pipeline (i.e.
+  treating ARM's raw value as cm, the team's house convention, not
+  meters) drops ARM's median to 0.027 and max from an impossible 51.9 to
+  a plausible 2.4 — landing squarely inside the UND ASCII campaigns'
+  0.006-1.21 range instead of standing alone.
 
 ## Decision
 
@@ -56,7 +62,8 @@ edr_from_mms_log10kWkg(x) = cbrt(1000 * 10**x)     # kW/kg -> W/kg=m^2/s^3, then
 edr_from_und_cm23s1(x)    = x / 100**(2/3)          # cm^(2/3) -> m^(2/3)
 ```
 
-ARM needs no conversion function — `Turbulence_eps` is used as-is.
+ARM uses `edr_from_und_cm23s1` too — its raw `Turbulence_eps` is treated
+as the same cm^(2/3)*s^-1 UND house convention, not meters (see above).
 
 `EDR_mms_log10kWkg`, `EDR_und_cm23s1`, and `EDR_arm` are all replaced by a
 single **`EDR_m23s1`** column (ATTREX, POSIDON, IPHEX, MC3E, MPACE,

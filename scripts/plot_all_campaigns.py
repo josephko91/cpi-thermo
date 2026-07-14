@@ -16,6 +16,8 @@ kept pointing at the newest run):
   10_alt_distributions.png       — Alt_m histogram per campaign, faceted grid
   11_sw_distributions.png        — Sw histogram per campaign, faceted grid
   12_alt_vs_tair_scatter.png     — Alt_m vs Tair_C scatter, all campaigns overlaid
+  13_edr_distributions.png       — EDR_m23s1 KDE per campaign, faceted grid
+  14_wind_uvw_distributions.png  — Wind_U/V/W_ms KDE overlay per campaign, faceted grid
 
 Usage (standalone):
   python scripts/plot_all_campaigns.py
@@ -976,6 +978,135 @@ if "Alt_m" in env.columns:
         print(f"  Saved {out}")
 else:
     print("  Skipped (Alt_m column not present in dataset)")
+
+
+# ---------------------------------------------------------------------------
+# 13. EDR_m23s1 distributions — KDE per campaign
+# ---------------------------------------------------------------------------
+print("Plot 13: EDR_m23s1 distributions ...")
+if "EDR_m23s1" in env.columns:
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(NROWS, NCOLS, figsize=(14, NROWS * 2.6),
+                                 constrained_layout=True)
+        axes_flat = axes.flat
+
+        # Clip at 3.0 m^(2/3)*s^-1 -- ICAO severe turbulence is >=0.5, so
+        # this comfortably covers real data; a handful of ARM rows extend
+        # into the tens (real severe-turbulence penetrations, see
+        # docs/decisions/2026-07-13-edr-unification.md) and would otherwise
+        # flatten every other campaign's panel.
+        edr_lo, edr_hi = 0.0, 3.0
+        x = np.linspace(edr_lo, edr_hi, 500)
+        for i, camp in enumerate(campaigns):
+            ax = axes_flat[i]
+            data = env.loc[env["Campaign"] == camp, "EDR_m23s1"].dropna()
+            color = COLORS[camp]
+
+            if len(data) > 10:
+                try:
+                    d = data.clip(edr_lo, edr_hi).values
+                    y = _kde(d, x)
+                    ax.fill_between(x, y, alpha=0.35, color=color)
+                    ax.plot(x, y, color=color, lw=1.5)
+                except Exception:
+                    ax.hist(data.clip(edr_lo, edr_hi), bins=60, density=True,
+                            color=color, alpha=0.6)
+            else:
+                ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
+                        ha="center", va="center", fontsize=8, color="0.5")
+
+            ax.set_xlim(edr_lo, edr_hi)
+            ax.set_title(camp, fontsize=8, fontweight="bold", color=color, pad=3)
+            ax.set_xlabel("EDR_m23s1 (m^(2/3)/s)", fontsize=7)
+            ax.set_ylabel("density", fontsize=7)
+            ax.tick_params(labelsize=7)
+
+            med = data.median() if len(data) > 0 else np.nan
+            n_valid = len(data)
+            med_str = f"{med:.3f}" if np.isfinite(med) else "—"
+            ax.text(0.97, 0.92, f"n={n_valid:,}\nmed={med_str}",
+                    transform=ax.transAxes, ha="right", va="top",
+                    fontsize=6.5, color="0.35")
+
+        hide_unused(axes_flat, len(campaigns))
+        fig.suptitle(
+            "Eddy dissipation rate (EDR_m23s1) distributions — all campaigns\n"
+            "(clipped at 3.0 m^(2/3)*s^-1; ICAO moderate/severe thresholds ~0.3-0.5)",
+            fontsize=11, fontweight="bold", y=1.01,
+        )
+        out = OUT_DIR / "13_edr_distributions.png"
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved {out}")
+else:
+    print("  Skipped (EDR_m23s1 column not present in dataset)")
+
+
+# ---------------------------------------------------------------------------
+# 14. Wind_U_ms / Wind_V_ms / Wind_W_ms distributions — overlaid KDE per campaign
+# ---------------------------------------------------------------------------
+print("Plot 14: Wind U/V/W distributions ...")
+WIND_COLS = ["Wind_U_ms", "Wind_V_ms", "Wind_W_ms"]
+wind_cols_present = [c for c in WIND_COLS if c in env.columns]
+if wind_cols_present:
+    WIND_COMPONENT_COLORS = {
+        "Wind_U_ms": "#1f77b4",  # blue
+        "Wind_V_ms": "#d62728",  # red
+        "Wind_W_ms": "#2ca02c",  # green
+    }
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(NROWS, NCOLS, figsize=(14, NROWS * 2.6),
+                                 constrained_layout=True)
+        axes_flat = axes.flat
+
+        # Clip at +-60 m/s -- excludes the 9999.0 sentinel/fill values still
+        # present in some campaigns' raw wind fields (see QC4,
+        # logs/qaqc/latest/04_sentinel_flags.csv) without needing to mask
+        # them upstream; real aircraft-measured wind rarely exceeds this.
+        w_lo, w_hi = -60.0, 60.0
+        x = np.linspace(w_lo, w_hi, 500)
+        for i, camp in enumerate(campaigns):
+            ax = axes_flat[i]
+            any_data = False
+            for col in wind_cols_present:
+                data = env.loc[env["Campaign"] == camp, col].dropna()
+                data = data[(data >= w_lo) & (data <= w_hi)]
+                if len(data) > 10:
+                    any_data = True
+                    color = WIND_COMPONENT_COLORS[col]
+                    try:
+                        y = _kde(data.values, x)
+                        ax.plot(x, y, color=color, lw=1.3, label=col.replace("_ms", ""))
+                        ax.fill_between(x, y, alpha=0.15, color=color)
+                    except Exception:
+                        ax.hist(data, bins=60, density=True, color=color,
+                                alpha=0.35, histtype="step", label=col.replace("_ms", ""))
+
+            if not any_data:
+                ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
+                        ha="center", va="center", fontsize=8, color="0.5")
+
+            ax.axvline(0, color="k", lw=0.8, ls="--", alpha=0.5)
+            ax.set_xlim(w_lo, w_hi)
+            ax.set_title(camp, fontsize=8, fontweight="bold", color=COLORS[camp], pad=3)
+            ax.set_xlabel("wind component (m/s)", fontsize=7)
+            ax.set_ylabel("density", fontsize=7)
+            ax.tick_params(labelsize=7)
+            if any_data:
+                ax.legend(fontsize=5.5, loc="upper left", framealpha=0.8)
+
+        hide_unused(axes_flat, len(campaigns))
+        fig.suptitle(
+            "Wind component (U/V/W) distributions — all campaigns\n"
+            "(clipped at ±60 m/s to exclude sentinel/fill values)",
+            fontsize=11, fontweight="bold", y=1.01,
+        )
+        out = OUT_DIR / "14_wind_uvw_distributions.png"
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved {out}")
+else:
+    print("  Skipped (no Wind_U/V/W_ms columns present in dataset)")
 
 
 update_latest(OUT_DIR.parent, OUT_DIR)
