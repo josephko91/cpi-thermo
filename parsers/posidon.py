@@ -47,7 +47,7 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import qv_from_ppmv, sw_from_si, round_timestamp_to_second
+from .utils import qv_from_ppmv, sw_from_si, round_timestamp_to_second, edr_from_mms_log10kWkg
 
 
 # ---------------------------------------------------------------------------
@@ -348,12 +348,13 @@ def extract_posidon_standard(
     out["Wind_U_ms"] = df.get("MMS-1HZ_U", np.nan) * 0.01
     out["Wind_V_ms"] = df.get("MMS-1HZ_V", np.nan) * 0.01
     out["Wind_W_ms"] = df.get("MMS-1HZ_W", np.nan) * 0.01
-    out["TAS_ms"] = df.get("MMS-1HZ_TAS", np.nan) * 0.01
-    out["Roll_deg"] = df.get("MMS-1HZ_ROLL", np.nan) * 0.01
-    out["Pitch_deg"] = df.get("MMS-1HZ_PITCH", np.nan) * 0.01
-    out["Heading_deg"] = df.get("MMS-1HZ_HDG", np.nan) * 0.01
-    out["EDR_mms_log10kWkg"] = df.get("MMS-1HZ_TEDR", np.nan) * 0.01
-    out["REYN_mms"] = df.get("MMS-1HZ_REYN", np.nan) * 0.01
+    # MMS_TEDR fill flag: same as ATTREX -- valid readings top out ~-3.2
+    # log10(kW/kg); a ~12-16.5 cluster is an instrument fill flag, not real
+    # turbulence (would convert to physically impossible eps^(1/3) values).
+    _tedr_log10 = df.get("MMS-1HZ_TEDR", np.nan) * 0.01
+    if isinstance(_tedr_log10, pd.Series):
+        _tedr_log10 = _tedr_log10.where(_tedr_log10 <= 0, np.nan)
+    out["EDR_m23s1"] = edr_from_mms_log10kWkg(_tedr_log10)
 
     out["Campaign"] = campaign
 

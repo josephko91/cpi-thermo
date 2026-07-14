@@ -20,10 +20,12 @@ from .utils import (
     clean_column_name,
     extract_takeoff_date,
     si_from_rh,
+    edr_from_und_cm23s1,
     es_ice_hPa,
     qv_from_e_P,
     sw_from_si,
     round_timestamp_to_second,
+    wind_speed_dir_to_uv,
     COMMON_NA_VALUES,
 )
 
@@ -124,7 +126,9 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
     if nav_path is not None:
         df_nav = _read_met_cit_file(nav_path)
         nav_cols_to_merge = [
-            c for c in ("Timestamp", "POS_Lat", "POS_Lon", "POS_Alt") if c in df_nav.columns
+            c for c in (
+                "Timestamp", "POS_Lat", "POS_Lon", "POS_Alt",
+            ) if c in df_nav.columns
         ]
         if len(nav_cols_to_merge) > 1:
             # Exact-second outer merge -- no tolerance. Raw headers confirm
@@ -171,6 +175,9 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
         met_cols_to_merge.append(air_temp_col)
     if pres_col_met:
         met_cols_to_merge.append(pres_col_met)
+    for turb_col in ("Wind_Z_Nose", "Wind_M_Nose", "Wind_D_Nose", "TURB"):
+        if turb_col in df_met.columns:
+            met_cols_to_merge.append(turb_col)
 
     if len(met_cols_to_merge) > 1:
         # Exact-second outer merge -- no tolerance, same reasoning as the
@@ -279,6 +286,12 @@ def extract_crystal_face_und_standard(df: pd.DataFrame) -> pd.DataFrame:
     # Sw from Si and T
     sw = sw_from_si(df.get("Si", np.nan), df.get("Tair", np.nan))
 
+    # Wind_D_Nose is undocumented in this campaign's raw header; assumed
+    # standard meteorological "from" convention (clockwise from north).
+    wind_u, wind_v = wind_speed_dir_to_uv(
+        df.get("Wind_M_Nose", np.nan), df.get("Wind_D_Nose", np.nan)
+    )
+
     return pd.DataFrame({
         "Timestamp": df["Timestamp"],
         "Tair_C": df.get("Tair", np.nan),
@@ -292,6 +305,10 @@ def extract_crystal_face_und_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df.get(lat_col, np.nan) if lat_col else np.nan,
         "Lon": df.get(lon_col, np.nan) if lon_col else np.nan,
         "Alt_m": df.get(alt_col, np.nan) if alt_col else np.nan,
+        "Wind_W_ms": df.get("Wind_Z_Nose", np.nan),
+        "Wind_U_ms": wind_u,
+        "Wind_V_ms": wind_v,
+        "EDR_m23s1": edr_from_und_cm23s1(df.get("TURB", np.nan)),
         "Campaign": df.get("Campaign", "CRYSTAL-FACE-UND"),
         "source_file": df["source_file"],
     })

@@ -83,19 +83,9 @@ HARD_BOUNDS: dict[str, tuple[float, float]] = {
     "Alt_m":  (-500.0, 25000.0),
     "Lat":    (-90.0,  90.0),
     "Lon":    (-180.0, 180.0),
-    # Turbulence/attitude fields added 2026-07-13. Bounds kept generous (not
-    # tight to typical level-flight values) since different instrument
-    # families may use different sign conventions for Roll/Pitch -- these are
-    # sanity bounds against corrupted/misdecoded data, not flight-envelope
-    # limits. EDR and Wind_*/WindSpeed_ms are deliberately NOT bounded here:
-    # turbulence/wind speed are legitimately unbounded by storm severity, and
-    # a hard bound would false-flag real severe-weather events.
-    "Roll_deg":  (-180.0, 180.0),
-    "Pitch_deg": (-90.0,   90.0),
-    "Heading_deg": (0.0,  360.0),
-    "AngleOfAttack_deg": (-30.0, 30.0),
-    "Sideslip_deg":      (-30.0, 30.0),
-    "TAS_ms": (0.0, 300.0),
+    # EDR and Wind_* are deliberately NOT bounded here: turbulence/wind speed
+    # are legitimately unbounded by storm severity, and a hard bound would
+    # false-flag real severe-weather events.
 }
 # qv columns share the same bounds
 QV_BOUNDS: tuple[float, float] = (0.0, 100.0)

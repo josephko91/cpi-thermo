@@ -55,7 +55,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from .utils import si_from_rh, si_from_ppmv, es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si
+from .utils import si_from_rh, si_from_ppmv, es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv
 
 
 ICE_L_FILE_RE = re.compile(
@@ -253,6 +253,23 @@ def load_ice_l_file(
         lon[(lon < -180) | (lon > 180)]         = np.nan
         alt_m[(alt_m < -500) | (alt_m > 25000)] = np.nan
 
+        # ---- Turbulence / wind / attitude (Family C — NCAR/NRC RAF-Nimbus) -
+        # Prefer GPS-corrected wind (WSC/WDC) over the raw variant (WS/WD)
+        # where both exist, same preference as the standard column-naming
+        # doc's guidance. WI/WIC is the vertical wind component.
+        def _pick_1d(candidates: list[str]) -> np.ndarray:
+            name = _pick_var(ds, candidates)
+            if name is None:
+                return np.full(n, np.nan)
+            return _match_length(_to_float_1d(ds[name].values), n)
+
+        wind_w = _pick_1d(["WIC", "WI"])
+        wind_speed = _pick_1d(["WSC", "WS"])
+        wind_dir = _pick_1d(["WDC", "WD"])
+        # NCAR RAF-Nimbus WD/WDC is documented as standard meteorological wind
+        # direction (FROM, clockwise from north).
+        wind_u, wind_v = wind_speed_dir_to_uv(wind_speed, wind_dir)
+
         # ---- Assemble ------------------------------------------------------
         df = pd.DataFrame(
             {
@@ -266,6 +283,9 @@ def load_ice_l_file(
                 "Lat":               lat,
                 "Lon":               lon,
                 "Alt_m":             alt_m,
+                "Wind_W_ms":         wind_w,
+                "Wind_U_ms":         wind_u,
+                "Wind_V_ms":         wind_v,
                 "source_file":       filepath.name,
                 "Campaign":          "ICE-L",
             }
@@ -378,6 +398,9 @@ def extract_ice_l_standard(df: pd.DataFrame) -> pd.DataFrame:
             "Lat":               df.get("Lat",               np.nan),
             "Lon":               df.get("Lon",               np.nan),
             "Alt_m":             df.get("Alt_m",             np.nan),
+            "Wind_W_ms":         df.get("Wind_W_ms",         np.nan),
+            "Wind_U_ms":         df.get("Wind_U_ms",         np.nan),
+            "Wind_V_ms":         df.get("Wind_V_ms",         np.nan),
             "Campaign":          df.get("Campaign",          "ICE-L"),
             "source_file":       df.get("source_file",       ""),
         }

@@ -269,8 +269,13 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
     lat_col = _choose_column(df, ["Lat", "Latitude", "GPS_Lat"])
     lon_col = _choose_column(df, ["Long", "Lon", "Longitude", "GPS_Lon"])
     time_col = _choose_column(df, ["Time_Start", "Time", "UTC", "Time_UTC"])
+    # Vertical air velocity — never isolated by name before this
+    # (load_escape_file previously returned the whole raw df untouched for
+    # this). Same _choose_column lookup pattern as the temp/pressure/position
+    # columns above.
+    vav_col = _choose_column(df, ["VaV", "Vertical_Air_Velocity", "Wz"])
 
-    _coerce_numeric(df, [temp_col, dew_col, pres_col, alt_col, lat_col, lon_col, time_col])
+    _coerce_numeric(df, [temp_col, dew_col, pres_col, alt_col, lat_col, lon_col, time_col, vav_col])
 
     # Unit normalization
     if temp_col:
@@ -387,6 +392,7 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
     df["Lat"] = df[lat_col] if lat_col else np.nan
     df["Lon"] = df[lon_col] if lon_col else np.nan
     df["Alt_m"] = df[alt_col] if alt_col else np.nan
+    df["Wind_W_ms"] = df[vav_col] if vav_col else np.nan
     df["source_file"] = filepath.name
     df["Campaign"] = "ESCAPE"
 
@@ -446,6 +452,7 @@ def extract_escape_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lat": df.get("Lat", np.nan),
         "Lon": df.get("Lon", np.nan),
         "Alt_m": df.get("Alt_m", np.nan),
+        "Wind_W_ms": df.get("Wind_W_ms", np.nan),
         "Campaign": df.get("Campaign", "ESCAPE"),
         "source_file": df.get("source_file", ""),
     })

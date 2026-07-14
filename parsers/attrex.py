@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Union, Dict, List, Optional
 from collections import defaultdict
 
-from .utils import round_timestamp_to_second, si_from_ppmv, qv_from_ppmv, sw_from_si
+from .utils import round_timestamp_to_second, si_from_ppmv, qv_from_ppmv, sw_from_si, edr_from_mms_log10kWkg
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +569,16 @@ def extract_attrex_standard(df: pd.DataFrame) -> pd.DataFrame:
     def _get(col):
         return df[col] if col in df.columns else np.nan
 
+    # MMS_TEDR fill flag: valid log10(kW/kg) readings top out around -3.2
+    # (severe turbulence); a distinct cluster at ~12-16.5 (eps^(1/3) in the
+    # hundreds of thousands of m^(2/3)*s^-1 once converted -- physically
+    # impossible, ICAO severe threshold is 0.5) is an instrument fill flag
+    # not caught by ATTREX_MISSING_FLAGS since it isn't a round sentinel in
+    # log space. Mask before cube-root conversion, not after.
+    _tedr_log10 = _get("MMS_TEDR") * 0.01
+    if isinstance(_tedr_log10, pd.Series):
+        _tedr_log10 = _tedr_log10.where(_tedr_log10 <= 0, np.nan)
+
     # qv from ppmv for each instrument (no P needed)
     qv_dlh  = qv_from_ppmv(_get("H2O_DLH_ppmv"))  if "H2O_DLH_ppmv"  in df.columns else np.nan
     qv_noaa = qv_from_ppmv(_get("H2O_NOAA_ppmv")) if "H2O_NOAA_ppmv" in df.columns else np.nan
@@ -609,12 +619,7 @@ def extract_attrex_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Wind_U_ms": _get("MMS_U") * 0.01,
         "Wind_V_ms": _get("MMS_V") * 0.01,
         "Wind_W_ms": _get("MMS_W") * 0.01,
-        "TAS_ms": _get("MMS_TAS") * 0.01,
-        "Roll_deg": _get("MMS_ROLL") * 0.01,
-        "Pitch_deg": _get("MMS_PITCH") * 0.01,
-        "Heading_deg": _get("MMS_HDG") * 0.01,
-        "EDR_mms_log10kWkg": _get("MMS_TEDR") * 0.01,
-        "REYN_mms": _get("MMS_REYN") * 0.01,
+        "EDR_m23s1": edr_from_mms_log10kWkg(_tedr_log10),
         "Campaign": df.get("Campaign", "ATTREX"),
         "source_file": source,
     })

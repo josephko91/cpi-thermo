@@ -186,12 +186,44 @@ def round_timestamp_to_second(series: pd.Series) -> pd.Series:
 
 
 # =============================================================================
-# Wind / Attitude / Airspeed Utilities
+# Wind Utilities
 # =============================================================================
 
-def knots_to_ms(knots: np.ndarray) -> np.ndarray:
-    """Convert knots to m/s. Apply only where a file's own header confirms knots."""
-    return np.asarray(knots, dtype=float) * 0.514444
+def wind_speed_dir_to_uv(speed, direction_deg):
+    """Convert meteorological wind speed/direction (direction = FROM, degrees
+    clockwise from north) to U (eastward) and V (northward) components, m/s."""
+    rad = np.deg2rad(direction_deg)
+    u = -speed * np.sin(rad)
+    v = -speed * np.cos(rad)
+    return u, v
+
+
+# =============================================================================
+# EDR (Eddy Dissipation Rate) Unification
+# =============================================================================
+# Both conversions below produce the ICAO/WMO-standard EDR quantity,
+# eps^(1/3) in m^(2/3)*s^-1 -- see docs/decisions/2026-07-13-edr-unification.md.
+# ARM uses edr_from_und_cm23s1 too: its raw Turbulence_eps field is
+# eps^(1/3) but in the same cm^(2/3)*s^-1 house convention as the later UND
+# ASCII pipeline (same aircraft/team), confirmed by value-range comparison,
+# not by an explicit unit in ARM's own readme.
+
+_CM_TO_M_23 = 100.0 ** (2.0 / 3.0)  # cm^(2/3) -> m^(2/3), ~21.544
+
+
+def edr_from_und_cm23s1(cm23s1: np.ndarray) -> np.ndarray:
+    """UND pipeline EDR (already eps^(1/3), cm^(2/3)*s^-1) -> m^(2/3)*s^-1."""
+    return np.asarray(cm23s1, dtype=float) / _CM_TO_M_23
+
+
+def edr_from_mms_log10kWkg(log10_kWkg: np.ndarray) -> np.ndarray:
+    """NASA Ames MMS EDR (log10 of eps in kW/kg) -> eps^(1/3) in m^(2/3)*s^-1.
+
+    kW/kg -> W/kg is *1000; W/kg is dimensionally m^2*s^-3 (energy per mass
+    per time), so eps^(1/3) in m^(2/3)*s^-1 = (1000 * 10**log10_kWkg) ** (1/3).
+    """
+    eps_W_per_kg = 1000.0 * np.power(10.0, np.asarray(log10_kWkg, dtype=float))
+    return np.cbrt(eps_W_per_kg)
 
 
 def first_per_second(df: pd.DataFrame, ts_col: str = "Timestamp") -> pd.DataFrame:
