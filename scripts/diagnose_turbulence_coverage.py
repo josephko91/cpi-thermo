@@ -3,22 +3,22 @@
 Turbulence/Wind/Attitude Coverage Diagnostic
 =============================================
 Reports per-campaign non-null coverage for the wind/EDR columns
-(Wind_U_ms/Wind_V_ms/Wind_W_ms, EDR_m23s1, EDR_arm), and a source-family
-breakdown of the unified EDR_m23s1 histogram -- the concrete check that the
-2026-07-13 EDR unification (docs/decisions/2026-07-13-edr-unification.md)
-produced a sane combined distribution: the NASA Ames MMS-sourced campaigns
-(ATTREX, POSIDON) and UND-pipeline-sourced campaigns (IPHEX, MC3E, MPACE,
-OLYMPEX, CRYSTAL-FACE-UND) should occupy overlapping, physically plausible
-eps^(1/3) ranges (roughly 0-2 m^(2/3)*s^-1) once converted -- a leftover
-scale error in one source family would show up as a disjoint sub-range in
-this histogram. EDR_arm is plotted separately since it is deliberately not
-part of the unification (units unconfirmed).
+(Wind_U_ms/Wind_V_ms/Wind_W_ms, EDR_m23s1), and a source-family breakdown of
+the unified EDR_m23s1 histogram -- the concrete check that the 2026-07-13
+EDR unification (docs/decisions/2026-07-13-edr-unification.md) produced a
+sane combined distribution across all three source families: NASA Ames MMS
+(ATTREX, POSIDON), UND ASCII pipeline (IPHEX, MC3E, MPACE, OLYMPEX,
+CRYSTAL-FACE-UND), and ARM's UND Citation binary archive (ARM) should all
+occupy overlapping, physically plausible eps^(1/3) ranges (roughly
+0-2 m^(2/3)*s^-1, ICAO moderate/severe ~0.3-0.5+) once converted -- a
+leftover scale error in any one source family would show up as a disjoint
+sub-range in this histogram.
 
 Outputs (logs/diagnose_turbulence_coverage/<timestamp>/ and
 figs/diagnose_turbulence_coverage/<timestamp>/, with a `latest` symlink in
 each kept pointing at the newest run):
   coverage_by_campaign.csv   - per-campaign non-null fraction for every new column
-  edr_histograms.png         - EDR_m23s1 by source family (overlaid) + EDR_arm
+  edr_histograms.png         - EDR_m23s1 by source family (overlaid)
 
 Usage:
     python scripts/diagnose_turbulence_coverage.py
@@ -43,15 +43,15 @@ sys.path.insert(0, str(ROOT))
 from scripts.log_paths import timestamp as _run_timestamp, update_latest
 
 TURBULENCE_COLS = [
-    "Wind_U_ms", "Wind_V_ms", "Wind_W_ms", "EDR_m23s1", "EDR_arm",
+    "Wind_U_ms", "Wind_V_ms", "Wind_W_ms", "EDR_m23s1",
 ]
 
 # Source-family split of the unified EDR_m23s1 column, for the overlap
 # sanity check -- see docs/decisions/2026-07-13-edr-unification.md.
-# EDR_arm is intentionally excluded from EDR_m23s1 (units unconfirmed).
 EDR_SOURCE_CAMPAIGNS = {
     "NASA Ames MMS (converted from log10 kW/kg)": ["ATTREX", "POSIDON"],
-    "UND pipeline (converted from cm^(2/3)s^-1)": ["IPHEX", "MC3E", "MPACE", "OLYMPEX", "CRYSTAL-FACE-UND"],
+    "UND ASCII pipeline (converted from cm^(2/3)s^-1)": ["IPHEX", "MC3E", "MPACE", "OLYMPEX", "CRYSTAL-FACE-UND"],
+    "ARM / UND Citation binary (already eps^(1/3) in meters)": ["ARM"],
 }
 
 
@@ -77,9 +77,7 @@ def coverage_by_campaign(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 
 def plot_edr_histograms(df: pd.DataFrame, out_path: Path) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-
-    ax = axes[0]
+    fig, ax = plt.subplots(figsize=(7, 4))
     any_family = False
     for label, campaigns in EDR_SOURCE_CAMPAIGNS.items():
         vals = df.loc[df["Campaign"].isin(campaigns), "EDR_m23s1"].dropna()
@@ -90,13 +88,6 @@ def plot_edr_histograms(df: pd.DataFrame, out_path: Path) -> None:
     ax.set_xlabel("EDR_m23s1 (m^(2/3)*s^-1)")
     if any_family:
         ax.legend(fontsize=7)
-
-    ax = axes[1]
-    arm_vals = df["EDR_arm"].dropna() if "EDR_arm" in df.columns else pd.Series(dtype=float)
-    if len(arm_vals):
-        ax.hist(arm_vals, bins=60, color="gray")
-    ax.set_title("EDR_arm (not unified, units unconfirmed)")
-    ax.set_xlabel("EDR_arm (raw)")
 
     fig.tight_layout()
     fig.savefig(out_path)

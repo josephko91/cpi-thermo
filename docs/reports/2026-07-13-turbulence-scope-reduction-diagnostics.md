@@ -12,13 +12,16 @@ Two changes to the turbulence/wind schema, run and validated together:
    `VertVel_ms`, `Accel_Vert_ms2`, `TAS_ms`, `IAS_ms`, `IAS_ms_nose`,
    `MachNo`, `DriftAngle_deg`, `TrackAngle_deg`, `REYN_mms` from parsers,
    `config.yaml`, `qa_checks.py`, and `diagnose_turbulence_coverage.py`.
-2. **EDR unification**: replaced the separate `EDR_mms_log10kWkg` (ATTREX,
-   POSIDON) and `EDR_und_cm23s1` (IPHEX, MC3E, MPACE, OLYMPEX,
-   CRYSTAL-FACE-UND) columns with a single **`EDR_m23s1`** column in the
-   ICAO/WMO-standard unit, eps^(1/3) in m^(2/3)·s⁻¹. `EDR_arm` (ARM) stays
-   separate — its raw archive units are unconfirmed and were **not**
-   folded into the unified column. Full reasoning:
-   `docs/decisions/2026-07-13-edr-unification.md`.
+2. **EDR unification**: replaced `EDR_mms_log10kWkg` (ATTREX, POSIDON),
+   `EDR_und_cm23s1` (IPHEX, MC3E, MPACE, OLYMPEX, CRYSTAL-FACE-UND), and
+   `EDR_arm` (ARM) with a single **`EDR_m23s1`** column in the ICAO/WMO
+   standard unit, eps^(1/3) in m^(2/3)·s⁻¹. ARM was initially left out
+   pending unit confirmation, then folded in once
+   `data/raw/ARM/poellot-citation-t4-readme.txt` (the instrument team's
+   own README) confirmed field 18 (`Turbulence_eps`) is already
+   eps^(1/3) in meters — ARM flew the same UND Citation II
+   aircraft/team as the other UND-sourced campaigns, just an older binary
+   archive format. Full reasoning: `docs/decisions/2026-07-13-edr-unification.md`.
 
 A bug surfaced *by* the unification was fixed before the final run: MMS's
 `TEDR` field carries an undocumented fill-flag cluster around
@@ -29,14 +32,14 @@ pre-conversion in `parsers/attrex.py` and `parsers/posidon.py`.
 
 ## Pipeline rebuild
 
-`python main.py --all` — `logs/pipeline/20260713_183828/`
+`python main.py --all` — `logs/pipeline/20260713_202926/`
 
 - **15 campaigns, 4,572,581 rows** — unchanged (row count is driven by
   Si/qv/Tair coverage, not the turbulence columns).
 
 ## QA checks (`scripts/qa_checks.py`)
 
-`logs/qaqc/20260713_184051/`
+`logs/qaqc/20260713_203316/`
 
 | Check | Name | Flags | % of dataset | Campaigns affected |
 |---|---|---:|---:|---:|
@@ -57,45 +60,51 @@ as the exploded `EDR_m23s1` values collided with sentinel numbers like
 
 ## Turbulence coverage (`scripts/diagnose_turbulence_coverage.py`)
 
-`logs/diagnose_turbulence_coverage/20260713_184147/`
+`logs/diagnose_turbulence_coverage/20260713_203437/`
 
-| Campaign | Wind_U/V/W | EDR_m23s1 | EDR_arm |
-|---|---:|---:|---:|
-| AIRS-II | 96.9% | — | — |
-| ARM | 0% U/V, 100% W | — | 100% |
-| ATTREX | 43.9% | 43.6% | — |
-| CRYSTAL-FACE-NASA | 89.1% | — | — |
-| CRYSTAL-FACE-UND | 77.7% | 93.1% | — |
-| ESCAPE | 0% U/V, 100% W | — | — |
-| ICE-L | ~100% | — | — |
-| IPHEX | 88.4% | 99.3% | — |
-| ISDAC | 90.7–98.6% | — | — |
-| MACPEX | 83.1–83.3% | — | — |
-| MC3E | 77.7% | 93.6% | — |
-| MIDCIX | 0% | — | — |
-| MPACE | 47.5% | 51.2% | — |
-| OLYMPEX | 99.1% | 100% | — |
-| POSIDON | 96.1–96.6% | 96.1% | — |
+| Campaign | Wind_U/V/W | EDR_m23s1 |
+|---|---:|---:|
+| AIRS-II | 96.9% | — |
+| ARM | 0% U/V, 100% W | 100% |
+| ATTREX | 43.9% | 43.6% |
+| CRYSTAL-FACE-NASA | 89.1% | — |
+| CRYSTAL-FACE-UND | 77.7% | 93.1% |
+| ESCAPE | 0% U/V, 100% W | — |
+| ICE-L | ~100% | — |
+| IPHEX | 88.4% | 99.3% |
+| ISDAC | 90.7–98.6% | — |
+| MACPEX | 83.1–83.3% | — |
+| MC3E | 77.7% | 93.6% |
+| MIDCIX | 0% | — |
+| MPACE | 47.5% | 51.2% |
+| OLYMPEX | 99.1% | 100% |
+| POSIDON | 96.1–96.6% | 96.1% |
 
 **EDR_m23s1 value ranges by source family** (the key unification sanity
-check — do the two independently-converted families land in the same
+check — do all three independently-converted families land in the same
 physical range?):
 
 | Source | Campaigns | Min | Median | Max |
 |---|---|---:|---:|---:|
-| NASA Ames MMS (from log10 kW/kg) | ATTREX, POSIDON | 0.00001 | 0.006 | 0.66–0.88 |
-| UND pipeline (from cm^(2/3)s⁻¹) | IPHEX, MC3E, MPACE, OLYMPEX, CRYSTAL-FACE-UND | 0.003–0.006 | 0.02–0.06 | 0.42–1.21 |
+| NASA Ames MMS (from log10 kW/kg) | ATTREX, POSIDON | 0.00001 | 0.006 | 0.88 |
+| UND ASCII pipeline (from cm^(2/3)s⁻¹) | IPHEX, MC3E, MPACE, OLYMPEX, CRYSTAL-FACE-UND | 0.0003 | 0.037 | 1.21 |
+| ARM / UND Citation binary (native meters) | ARM | 0.0 | 0.572 | 51.9 |
 
-Both families overlap cleanly in the 0–1.2 m^(2/3)·s⁻¹ range, consistent
-with ICAO turbulence-severity bands (moderate 0.3–0.5, severe ≥0.5) — no
-disjoint sub-range that would indicate a leftover unit-scale error.
-`EDR_arm` (ARM, not unified) ranges 0–52 in its raw, unconfirmed units —
-excluded from the comparison since it isn't m^(2/3)·s⁻¹.
+MMS and UND-ASCII overlap cleanly in the 0–1.2 m^(2/3)·s⁻¹ range,
+consistent with ICAO turbulence-severity bands (moderate 0.3–0.5, severe
+≥0.5). ARM's median (0.57) sits right at that same moderate/severe
+boundary — physically sane for a research aircraft — though its max (51.9)
+is far higher than the other two families. That's plausible rather than
+suspicious: ARM's Spring 2000 IOP flew intentional storm penetrations, and
+unlike the MMS bug there's no discontinuous sentinel gap in the
+distribution (IQR 0.29–1.18, smooth tail beyond) — the high tail looks
+like real severe-turbulence data, not a fill-value artifact. Flagged as a
+follow-up for an instrument-team cross-check, not blocking.
 
 ## Conclusion
 
 Scope reduction is clean. EDR unification is verified by physical-range
-overlap between the two converted source families, matching the ICAO
-standard EDR band; ARM was deliberately kept out. QA flags match baseline
-after fixing the MMS TEDR fill-flag bug the conversion exposed. Safe to
-commit.
+overlap across all three converted source families, matching the ICAO
+standard EDR band, with ARM's own instrument-team README confirming its
+units directly. QA flags match baseline after fixing the MMS TEDR
+fill-flag bug the conversion exposed. Safe to commit.

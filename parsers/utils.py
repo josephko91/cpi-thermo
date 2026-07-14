@@ -203,9 +203,8 @@ def wind_speed_dir_to_uv(speed, direction_deg):
 # =============================================================================
 # Both conversions below produce the ICAO/WMO-standard EDR quantity,
 # eps^(1/3) in m^(2/3)*s^-1 -- see docs/decisions/2026-07-13-edr-unification.md.
-# Do NOT add a similar function for EDR_arm: its raw archive units are
-# unconfirmed (no documentation found for the .t4archive.gz binary format),
-# so it is excluded from unification rather than guessed at.
+# ARM needs no conversion function: data/raw/ARM/poellot-citation-t4-readme.txt
+# confirms its Turbulence_eps field is already eps^(1/3) in meters.
 
 _CM_TO_M_23 = 100.0 ** (2.0 / 3.0)  # cm^(2/3) -> m^(2/3), ~21.544
 

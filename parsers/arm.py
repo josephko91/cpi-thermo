@@ -349,7 +349,13 @@ def extract_arm_standard(df: pd.DataFrame) -> pd.DataFrame:
         "Lon": df["GPS_Lon_deg"],
         "Alt_m": df.get("Alt_m", df["GPS_Alt_m"]),
         "Wind_W_ms": df.get("Vertical_Wind_m_s", np.nan),
-        "EDR_arm": df.get("Turbulence_eps", np.nan),
+        # Turbulence_eps is already eps^(1/3) in m^(2/3)*s^-1 (confirmed by
+        # data/raw/ARM/poellot-citation-t4-readme.txt field 18: "Turbulence
+        # / epsilon**1/3" -- same UND Citation II aircraft/team as the
+        # IPHEX/MC3E/MPACE/OLYMPEX/CRYSTAL-FACE-UND EDR_m23s1 sources, all
+        # SI meters in this readme, no scaling needed beyond the generic
+        # raw/1000-100 decode already applied above.
+        "EDR_m23s1": df.get("Turbulence_eps", np.nan),
         "Campaign": df.get("Campaign", "ARM"),
         "source_file": df["source_file"],
     })
