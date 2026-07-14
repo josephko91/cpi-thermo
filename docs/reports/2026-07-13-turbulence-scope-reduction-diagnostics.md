@@ -44,37 +44,64 @@ rather than assumed correct on the first pass:
   impossible 51.9 to a plausible 2.4 — landing squarely inside the other
   UND campaigns' range. Fixed in `parsers/arm.py`.
 
+## Third bug found: CRYSTAL-FACE-NASA wind scale factor never applied
+
+Separate from the EDR unification work, the new `14_wind_uvw_distributions.png`
+plot showed CRYSTAL-FACE-NASA's U/V wind KDE badly right-skewed compared to
+every other campaign. Root cause, in `parsers/crystal_face_nasa.py::load_mm_met_file`:
+the raw ICARTT file's header (`data/raw/CRYSTAL-FACE-NASA/MM/MM20020721.WB57`,
+lines 11-18) declares scale factors and missing-value sentinels for **all
+six** primary variables (`Psta, Tsta, Thta, U, V, W`):
+
+```
+0.1  0.01  0.01  0.1  0.1  0.1     ;scale factors
+99999 99999 99999 9999 9999 9999  ;missing values
+```
+
+but the parser only ever applied them to `Psta`/`Tsta` — `U`, `V`, `W` were
+passed straight through raw: unscaled (10x too large) and with the 9999
+missing-value sentinel sitting unmasked in the data (mean 820 m/s, max
+exactly 9999.0). Fixed by extending the existing scale/missing-value loop
+to all 6 columns. After the fix: `Wind_U_ms` min/median/max for
+CRYSTAL-FACE-NASA go from (-294, -37, 9999) to (-29.4, -4.6, 35.3) —
+physically sane aircraft-scale wind. This also fully explains QC4's prior
+73,566-flag count: it was *entirely* this one unmasked sentinel (QC4 now
+reads 0 flags, 0 campaigns — see below).
+
 ## Pipeline rebuild
 
-`python main.py --all` — `logs/pipeline/20260713_205407/`
+`python main.py --all` — `logs/pipeline/20260713_210614/`
 
 - **15 campaigns, 4,572,581 rows** — unchanged (row count is driven by
   Si/qv/Tair coverage, not the turbulence columns).
 
 ## QA checks (`scripts/qa_checks.py`)
 
-`logs/qaqc/20260713_205854/`
+`logs/qaqc/20260713_211134/`
 
 | Check | Name | Flags | % of dataset | Campaigns affected |
 |---|---|---:|---:|---:|
 | QC1 | Physical range checks | 6 | 0.000% | 1 |
 | QC2 | Internal consistency | 80,648 | 1.764% | 12 |
 | QC3 | Stuck-sensor / temporal continuity | 365 | 0.008% | 6 |
-| QC4 | Fill/sentinel value detection | 73,566 | 1.609% | 1 |
+| QC4 | Fill/sentinel value detection | **0** | 0.000% | 0 |
 | QC5 | Inter-instrument cross-validation | 0 | 0.000% | 5 |
 | QC6 | Per-flight coverage audit | 67 | 0.000% | 10 |
 | QC7 | Duplicate/out-of-order timestamps | 2 | 0.000% | 1 |
 | QC8 | Vertical profile plausibility | 6 | 0.000% | 3 |
 | QC9 | LWC cross-check (severe Si flags) | 1,436 | 0.031% | 2 |
 
-Matches the pre-change baseline exactly. (An intermediate run — before the
-TEDR fill-flag mask — briefly pushed QC4 to 73,569 flags across 3 campaigns
-as the exploded `EDR_m23s1` values collided with sentinel numbers like
-99999; that's gone after the mask.)
+QC4 dropped from the long-standing baseline of 73,566 flags (1 campaign) to
+**0** — that entire flag category turned out to be exactly the
+CRYSTAL-FACE-NASA wind sentinel bug above, not 12 separate scattered
+issues. Every other check is unchanged. (An earlier intermediate run —
+before the MMS TEDR fill-flag mask — briefly pushed QC4 to 73,569 flags
+across 3 campaigns as the exploded `EDR_m23s1` values collided with
+sentinel numbers like 99999; that was already gone before this final run.)
 
 ## Turbulence coverage (`scripts/diagnose_turbulence_coverage.py`)
 
-`logs/diagnose_turbulence_coverage/20260713_210050/`
+`logs/diagnose_turbulence_coverage/20260713_211257/`
 
 | Campaign | Wind_U/V/W | EDR_m23s1 |
 |---|---:|---:|
@@ -121,5 +148,8 @@ Scope reduction is clean. EDR unification is verified by physical-range
 overlap across all three converted source families, matching the ICAO
 standard EDR band — including a correction after the fact once ARM's
 value-range turned out implausible under the initial (wrong) unit
-assumption. QA flags match baseline after fixing the MMS TEDR fill-flag
-bug the conversion exposed. Safe to commit.
+assumption. The new per-campaign distribution plots did real work here:
+they caught both the ARM unit error and an unrelated, pre-existing
+CRYSTAL-FACE-NASA wind-scaling bug that QC4 had been silently flagging at
+1.6% of the whole dataset for the entire life of this schema. QC4 is now
+clean (0 flags). Safe to commit.

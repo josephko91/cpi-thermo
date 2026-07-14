@@ -353,8 +353,11 @@ def load_mm_met_file(filepath: Union[str, Path]) -> pd.DataFrame:
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Replace missing values and apply scale factors for P and T
-    for i, col in enumerate(["Psta", "Tsta"]):
+    # Replace missing values and apply scale factors for all 6 primary
+    # variables (Psta, Tsta, Thta, U, V, W) -- the header's scale/missing-
+    # value lines cover all 6 (Thta/U/V/W all x0.1 except Tsta/Thta x0.01),
+    # not just pressure/temperature.
+    for i, col in enumerate(["Psta", "Tsta", "Thta", "U", "V", "W"]):
         if i < len(missing_vals):
             df.loc[df[col] == missing_vals[i], col] = np.nan
         if i < len(scales):

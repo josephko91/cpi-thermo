@@ -71,14 +71,18 @@ sparsity, not a parser bug).
 | QC1 | Physical range checks | 6 | 0.000% | 1 |
 | QC2 | Internal consistency | 80,648 | 1.764% | 12 |
 | QC3 | Stuck-sensor / temporal continuity | 365 | 0.008% | 6 |
-| QC4 | Fill/sentinel value detection | 73,566 | 1.609% | 1 |
+| QC4 | Fill/sentinel value detection | 0 | 0.000% | 0 |
 | QC5 | Inter-instrument cross-validation | 0 | 0.000% | 5 |
 | QC6 | Per-flight coverage audit | 67 | 0.000% | 10 |
 | QC7 | Duplicate/out-of-order timestamps | 2 | 0.000% | 1 |
 | QC8 | Vertical profile plausibility | 6 | 0.000% | 3 |
 | QC9 | LWC cross-check (severe Si flags) | 1,436 | 0.031% | 2 |
 
-QC2's 80,648 flags are 74.2% mild (in-cloud qv exceeding saturation by up
+QC4 dropped to 0 after fixing a CRYSTAL-FACE-NASA wind-scaling bug (its
+ICARTT file's 0.1 scale factor and 9999 missing-value sentinel were never
+applied to `Wind_U_ms`/`Wind_V_ms`/`Wind_W_ms` — see
+`docs/reports/2026-07-13-turbulence-scope-reduction-diagnostics.md`). QC2's
+80,648 flags are 74.2% mild (in-cloud qv exceeding saturation by up
 to 1.05×, expected instrument physics) vs. 25.8% severe. QC9's 1,436 severe
 Si flags (IPHEX/OLYMPEX cold-regime) remain flagged-not-masked pending an
 independent TDL cross-check — see CLAUDE.md "Known issues."
