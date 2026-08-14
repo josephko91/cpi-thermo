@@ -180,6 +180,17 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 | `scripts/summarize_parser_recommendations.py` | reads `logs/campaign_missingness/latest/` by default | — |
 | `scripts/full_diagnostic.py` | — (console-only: variable stats, availability table, known-issue checks) | — |
 | `scripts/tests/test_{attrex,ice_l,iphex}.py` | `logs/campaign_tests/<campaign>/<ts>/` | `figs/campaign_tests/<campaign>/<ts>/` |
+| `scripts/compare_derived_feature_versions.py` | `logs/compare_derived_feature_versions/<ts>/` (per-campaign summary stats + KS tests, `summary_report.md`) | `figs/compare_derived_feature_versions/<ts>/` (per-campaign feature histograms) |
+| `scripts/derive_particle_size_microns.py` | `logs/derive_particle_size_microns/<ts>/` (per-campaign micron size columns + coverage) | — |
+| `scripts/verify_cpi_size_distribution.py` | `logs/verify_cpi_size_distribution/<ts>/` (COCPIT-vs-SPEC PSD comparison CSVs) | `figs/verify_cpi_size_distribution/<ts>/` (aggregate + per-date mean-size comparison) |
+| `scripts/verify_cpi_raw_image_sizes.py` | `logs/verify_cpi_raw_image_sizes/<ts>/` (raw-crop measurements + COCPIT comparison CSVs) | `figs/verify_cpi_raw_image_sizes/<ts>/` (size-distribution + per-date comparison plots) |
+
+The last four read an **external, unjoined** data source — the COCPIT vgg16
+derived-feature CSVs at
+`/Users/josephko/research/cocpit/final_databases/vgg16/<version>/<CAMPAIGN>.csv`
+plus products downloaded from NASA's ESPO archive — not
+`combined_env_data*.parquet`. They are not part of `main.py`'s pipeline and
+add no column to any tier.
 
 `scripts/full_diagnostic.py` used to also write its own `figs/full_diagnostic/`
 figures, but 4 of its 6 distributions plus its Si-vs-Tair scatter duplicated
