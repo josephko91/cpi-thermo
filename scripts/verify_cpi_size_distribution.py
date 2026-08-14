@@ -69,10 +69,12 @@ figs/verify_cpi_size_distribution/<timestamp>/, with `latest` symlinks):
 
 Usage:
     python scripts/verify_cpi_size_distribution.py
+    python scripts/verify_cpi_size_distribution.py --cocpit-version v1.2.0
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -101,6 +103,23 @@ STYLE = {
     "grid.color": "white", "grid.linewidth": 0.8, "axes.spines.top": False,
     "axes.spines.right": False, "font.size": 9,
 }
+
+
+def _parse_args() -> argparse.Namespace:
+    ts = _run_timestamp()
+    p = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--spec-data-dir", type=Path, default=SPEC_DATA_DIR,
+                    help=f"Directory of SPEC Inc CP<date>.WB57 files "
+                         f"(download from {SPEC_ARCHIVE_URL})")
+    p.add_argument("--cocpit-version", default=COCPIT_VERSION,
+                    help=f"COCPIT derived-feature version to compare against "
+                         f"(default: {COCPIT_VERSION}, the full 36-col schema)")
+    p.add_argument("--out", type=Path,
+                    default=ROOT / "logs" / "verify_cpi_size_distribution" / ts)
+    p.add_argument("--figs", type=Path,
+                    default=ROOT / "figs" / "verify_cpi_size_distribution" / ts)
+    return p.parse_args()
 
 
 # ---------------------------------------------------------------------------
@@ -241,8 +260,8 @@ def remove_text_floor_check(mids: np.ndarray, weights: np.ndarray) -> dict:
 # COCPIT loader
 # ---------------------------------------------------------------------------
 
-def load_cocpit_sizes() -> pd.DataFrame:
-    path = DERIVED_DB_ROOT / COCPIT_VERSION / f"{COCPIT_CAMPAIGN}.csv"
+def load_cocpit_sizes(version: str = COCPIT_VERSION) -> pd.DataFrame:
+    path = DERIVED_DB_ROOT / version / f"{COCPIT_CAMPAIGN}.csv"
     df = pd.read_csv(path, low_memory=False)
     df = _normalize_columns(df)
     df = _add_equiv_d_microns(df)
@@ -431,14 +450,14 @@ def write_summary_report(summary_df: pd.DataFrame, closure_df: pd.DataFrame,
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    ts = _run_timestamp()
-    out_dir = ROOT / "logs" / "verify_cpi_size_distribution" / ts
-    figs_dir = ROOT / "figs" / "verify_cpi_size_distribution" / ts
+    args = _parse_args()
+    out_dir = args.out
+    figs_dir = args.figs
     out_dir.mkdir(parents=True, exist_ok=True)
     figs_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Parsing SPEC Inc CPI files from {SPEC_DATA_DIR} ...")
-    spec_files = sorted(SPEC_DATA_DIR.glob("CP*.WB57"))
+    print(f"Parsing SPEC Inc CPI files from {args.spec_data_dir} ...")
+    spec_files = sorted(args.spec_data_dir.glob("CP*.WB57"))
     if not spec_files:
         print(f"  No files found. Download from {SPEC_ARCHIVE_URL} first.")
         return
@@ -464,8 +483,8 @@ def main() -> None:
     closure_df.to_csv(closure_path, index=False)
     print(f"\nSaved {closure_path}")
 
-    print(f"\nLoading COCPIT {COCPIT_CAMPAIGN} {COCPIT_VERSION} ...")
-    cocpit = load_cocpit_sizes()
+    print(f"\nLoading COCPIT {COCPIT_CAMPAIGN} {args.cocpit_version} ...")
+    cocpit = load_cocpit_sizes(args.cocpit_version)
     print(f"  {len(cocpit):,} rows, dates: {sorted(cocpit['flight_date'].unique())}")
 
     dates = sorted(spec_by_date)
@@ -510,10 +529,10 @@ def main() -> None:
     plot_per_date_histograms(spec_by_date, cocpit, dates, figs_dir)
 
     run_config = {
-        "spec_data_dir": str(SPEC_DATA_DIR),
+        "spec_data_dir": str(args.spec_data_dir),
         "spec_archive_url": SPEC_ARCHIVE_URL,
         "cocpit_campaign": COCPIT_CAMPAIGN,
-        "cocpit_version": COCPIT_VERSION,
+        "cocpit_version": args.cocpit_version,
         "flight_dates": [str(d) for d in dates],
         "remove_text_floor_check": floor_check,
         "numpy_version": np.__version__,
