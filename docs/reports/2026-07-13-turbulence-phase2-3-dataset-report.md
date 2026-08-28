@@ -1,9 +1,17 @@
 # Turbulence Phase 2+3 Completion — Dataset Variable Availability Report
 
 Date: 2026-07-13
-Status: Phase 1 (PR #16, merged) + Phase 2 + Phase 3 of
-`docs/todo/2026-07-13-turbulence-measurements-plan.md` now all implemented.
-Full pipeline rebuilt and re-diagnosed after the change.
+Status: Phase 1 (PR #16, merged) + Phase 2 + Phase 3 of the turbulence
+measurements plan now all implemented (see `docs/dataset-changelog.md`'s
+2026-07-13 entry). Full pipeline rebuilt and re-diagnosed after the change.
+
+**Superseded, same day:** the wide column set below (`Roll_deg`, `Pitch_deg`,
+`Heading_deg`, `TAS_ms`, etc.) was deliberately dropped later on 2026-07-13
+— see `docs/reports/2026-07-13-turbulence-scope-reduction-diagnostics.md`
+for the final, authoritative schema (`Wind_U/V/W_ms` + unified `EDR_m23s1`
+only) and its corrected CRYSTAL-FACE-NASA coverage figure. This report is
+kept for its historical record of the Phase 2/3 loader changes, not as a
+current schema reference.
 
 ## What changed this session
 
@@ -151,7 +159,7 @@ regenerate with:
 
 ```python
 import pandas as pd
-cols = [...]  # see docs/todo/2026-07-13-turbulence-measurements-plan.md "Standard column naming"
+cols = [...]  # see CLAUDE.md's "Standard output schema" section for the full column list
 for tier, path in [("L0","data/out/combined_env_data.parquet"),
                     ("L1","data/out/combined_env_data_L1.parquet"),
                     ("L2","data/out/combined_env_data_L2.parquet")]:

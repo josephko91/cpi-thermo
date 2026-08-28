@@ -14,15 +14,41 @@ between the last entry below and the current run — if campaign count or row co
 moved, add an entry.
 
 See `CLAUDE.md`'s "Known issues" section for current-state facts, `docs/decisions/`
-for per-investigation root-cause writeups, and `docs/sessions/` for session-by-session
-engineering logs.
+for per-investigation root-cause writeups.
+
+---
+
+## 2026-08-28 — Repo docs condensation; L0/L1/L2 regenerated and validated (no dataset change)
+
+**See:** `docs/reports/2026-08-28-dataset-validation.md`.
+
+Removed `docs/sessions/` (2 files, fully redundant with `docs/decisions/` +
+this changelog), the stale `docs/todo/2026-07-13-turbulence-measurements-plan.md`
+(marked "not yet implemented" but shipped same day it was written),
+`docs/reports/20260706_170726-dataset-report.md` (redundant re-snapshot),
+`notes/missing_data_notes.txt` (fully stale), and `scripts/diagnose_timestamps.py`
+(scratch debug script); deleted superseded dated/per-campaign parquet
+snapshots under `data/out/` (gitignored, regenerable). Corrected a stale
+CRYSTAL-FACE-NASA turbulence-coverage figure (89.1% → 81.5%) across 3
+2026-07-13 reports, whose tables were never regenerated after that day's
+later missing-value-mask fix (`9c02cf0`) — a documentation-accuracy fix, not
+a dataset change. Also corrected `CLAUDE.md`'s "Standard output schema" and
+"Known issues" sections, which still described the wider turbulence column
+set (`Roll_deg`, `TAS_ms`, etc.) dropped the same day it was added, and
+3-separate-EDR-columns, both superseded by `2026-07-13-edr-unification.md`
+and the scope-reduction commit `ea206e2`.
+
+Full L0/L1/L2 rebuild + all QC checks + CPI fusion diagnostic reproduced
+their last-known baselines exactly (row counts, QC flag counts, fusion %
+all unchanged) — confirms the pipeline is reproducible from current code.
+No parser or pipeline code changed this session.
 
 ---
 
 ## 2026-07-13 — Phase 1 turbulence columns added; ARM L0 now floored to 1 Hz (was native 4 Hz)
 
-**See:** `docs/todo/2026-07-13-turbulence-measurements-plan.md`,
-`docs/decisions/2026-07-13-turbulence-schema.md`.
+**See:** `docs/decisions/2026-07-13-turbulence-schema.md`,
+`docs/decisions/2026-07-13-edr-unification.md`.
 **Campaigns:** 15 (no change). **Schema:** +22 columns (wind, attitude,
 angle-of-attack/sideslip, true/indicated airspeed, EDR). **Rows:** total L0
 row count drops from ~5.0M to 4,572,581 — entirely attributable to the ARM
@@ -269,9 +295,7 @@ isn't given its own entry.
 
 ## 2026-07-05 — Coverage recovery sweep
 
-**Commits:** `8c9d8de`, `096704a`, `ac6a2c2`, `af92140` (see
-`docs/sessions/2026-07-05-cpi-fusion-and-remaining-fixes.md` for the full commit
-range and table)
+**Commits:** `8c9d8de`, `096704a`, `ac6a2c2`, `af92140`
 **Campaigns:** 14 (no change)
 
 Rollup of same-day fixes: ESCAPE P_hPa/temperature masking (stuck-Palt sensor

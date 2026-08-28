@@ -99,7 +99,7 @@ unification work and the source-family overlap check).
 | AIRS-II | 96.9% | — |
 | ARM | 0% U/V, 100% W | 100% |
 | ATTREX | 43.9% | 43.6% |
-| CRYSTAL-FACE-NASA | 89.1% | — |
+| CRYSTAL-FACE-NASA | ~~89.1%~~ 81.5% — table not regenerated after commit `9c02cf0`'s missing-value-mask fix; see `docs/reports/2026-08-28-dataset-validation.md` | — |
 | CRYSTAL-FACE-UND | 77.7% | 93.1% |
 | ESCAPE | 0% U/V, 100% W | — |
 | ICE-L | ~100% | — |
