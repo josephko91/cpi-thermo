@@ -42,9 +42,11 @@ joined per campaign to avoid cross-campaign timestamp collisions).
 | `scripts/build_data_tiers.py` | Builds the L1/L2 parquets from L0; writes `logs/build_data_tiers/<timestamp>/tier_summary.csv` |
 | `parsers/cpi_timestamps.py` | Canonical loader for `data/raw/cpi_embeddings_timestamps.csv` (CPI particle-image timestamps); normalizes campaign names and known UTC-offset bugs (e.g. MC3E) |
 | `scripts/diagnose_cpi_fusion.py` | Cross-references CPI image timestamps against the L0 parquet (exact-second match); writes `logs/cpi_fusion/<timestamp>/cpi_fusion_report.txt` |
-| `scripts/diagnose_turbulence_coverage.py` | Per-campaign coverage + per-EDR-family histograms for the wind/attitude/EDR/airspeed columns (see "Turbulence/wind/attitude columns" below); writes `logs/diagnose_turbulence_coverage/<timestamp>/` |
+| `scripts/diagnose_turbulence_coverage.py` | Per-campaign coverage + per-EDR-family histograms for the wind/EDR columns (see "Standard output schema" above); writes `logs/diagnose_turbulence_coverage/<timestamp>/` |
 | `scripts/log_paths.py` | Shared helper: every diagnostic script writes to `<logs\|figs>/<script>/<timestamp>/` and refreshes a `latest` symlink — see "Logs & figs layout" below |
 | `docs/dataset-changelog.md` | Reverse-chronological log of changes that affect the parquet's rows/columns/coverage (campaigns added, schema changes, coverage-moving bugfixes) |
+| `scripts/diagnose_qc3_merge_granularity.py` | Tests whether QC3 stuck-sensor runs (CRYSTAL-FACE-NASA, ESCAPE, ISDAC, MIDCIX) are a merge-granularity artifact vs. a genuine sensor freeze (`docs/decisions/2026-07-06-qc3-stuck-sensor.md`, issue #10) |
+| `scripts/analyze_crystal_diversity.py` | CPI-embedding diversity metrics (mean resultant length, mean cosine similarity to centroid) against the current L2 tier — standalone, not part of `main.py`'s pipeline |
 
 ## Standard output schema
 
@@ -55,23 +57,34 @@ Timestamp, Tair_C, P_hPa, Si, Si_chilled_mirror, Si_<instrument>, qv, qv_chilled
 qv_<instrument>, Sw, Lat, Lon, Alt_m, Campaign, source_file
 ```
 
-Plus, for the 9 campaigns with Phase 1 turbulence data (ARM, ATTREX, POSIDON,
-MACPEX, IPHEX, MC3E, MPACE, OLYMPEX, ISDAC — see
-`docs/todo/2026-07-13-turbulence-measurements-plan.md` and
-`docs/decisions/2026-07-13-turbulence-schema.md`), any subset of:
+Plus, for 14 of 15 campaigns (all except MIDCIX), any subset of:
 
 ```
-Wind_U_ms, Wind_V_ms, Wind_W_ms, WindSpeed_ms, WindDir_deg, Roll_deg, Pitch_deg,
-Heading_deg, AngleOfAttack_deg, Sideslip_deg, VertVel_ms, Accel_Vert_ms2, TAS_ms,
-IAS_ms, IAS_ms_nose, MachNo, DriftAngle_deg, TrackAngle_deg, EDR_mms_log10kWkg,
-EDR_und_cm23s1, EDR_und_cm23s1_nose, EDR_arm, REYN_mms
+Wind_U_ms, Wind_V_ms, Wind_W_ms, EDR_m23s1
 ```
 
 These are ungated (not in `build_data_tiers.py`'s `CORE_COLS`) — a campaign
-without a given field simply gets NaN there, same as `Si_<instrument>`.
-**EDR is intentionally never unified across `EDR_mms_log10kWkg`/
-`EDR_und_cm23s1`/`EDR_arm`** — see the decision doc for why merging them
-would be wrong even though they're all "EDR."
+without a given field simply gets NaN there, same as `Si_<instrument>`. Exact
+per-campaign provenance is documented inline in `config.yaml`'s
+`output.standardized_columns` comments.
+
+**EDR is unified into a single `EDR_m23s1` column** (eps^(1/3) in
+ICAO/WMO-standard m^(2/3)·s^-1) across the 8 campaigns that report it
+(ATTREX, POSIDON, IPHEX, MC3E, MPACE, OLYMPEX, CRYSTAL-FACE-UND, ARM) — see
+`docs/decisions/2026-07-13-edr-unification.md` for the verified per-family
+conversions.
+
+A wider attitude/airspeed schema (`Roll_deg`, `Pitch_deg`, `Heading_deg`,
+`WindSpeed_ms`/`WindDir_deg`, `AngleOfAttack_deg`/`Sideslip_deg`, `TAS_ms`/
+`IAS_ms`, `MachNo`, `DriftAngle_deg`/`TrackAngle_deg`, `REYN_mms`) was added
+2026-07-13 then deliberately dropped the same day, keeping only wind
+components + unified EDR — see `docs/decisions/2026-07-13-turbulence-schema.md`
+(original 3-separate-EDR-columns design, since superseded on the EDR point
+but still the reference for why wind/attitude *are* safely unified across
+campaigns) and `docs/reports/2026-07-13-turbulence-scope-reduction-diagnostics.md`
+(the scope-reduction + EDR-unification rationale, and the authoritative
+final column list — supersedes the wider list in
+`docs/reports/2026-07-13-turbulence-phase2-3-dataset-report.md`).
 
 ## Conventions
 
@@ -99,14 +112,15 @@ core-variable-complete filter on every row.
 
 ## Known issues / active investigations
 
-See `docs/decisions/` for per-investigation records, `docs/sessions/` for
-session-by-session summaries, and `docs/dataset-changelog.md` for the history of
-dataset-affecting changes (campaigns added, schema changes, coverage-moving
-bugfixes). Current dataset (L0): 15 campaigns, 4,572,581 rows (grew substantially
+See `docs/decisions/` for per-investigation records and `docs/dataset-changelog.md`
+for the history of dataset-affecting changes (campaigns added, schema changes,
+coverage-moving bugfixes). Current dataset (L0): 15 campaigns, 4,572,581 rows (grew substantially
 2026-07-07 when merge tolerance was removed repo-wide — see
 `docs/decisions/2026-07-07-exact-second-merge-rewrite.md`; dropped from ~5.0M to
 4,572,581 on 2026-07-13 when ARM's L0 rows were floored from native 4 Hz to 1 Hz,
-see `docs/dataset-changelog.md`); CPI/env fusion 93.7%
+see `docs/dataset-changelog.md`); reproduced exactly (row counts, all 9 QC
+checks, CPI fusion %) from current code on 2026-08-28, see
+`docs/reports/2026-08-28-dataset-validation.md`. CPI/env fusion 93.7%
 matched overall (57.2% with both Tair_C and Si) — run
 `python scripts/diagnose_cpi_fusion.py` for the full per-campaign breakdown. Key
 open items:
@@ -134,18 +148,18 @@ open items:
   `09_lwc_crossval.csv`. Needs an independent cross-check (e.g. Ophir TDL) to resolve.
 - **MIDCIX Alt_m** at 96.7%, not 100%: navigation (`FP`) files cover 2 more flight
   dates than the water-vapor (JW) files that `load_midcix()` keys rows off of.
-- **Phase 1 turbulence columns (2026-07-13) — known follow-ups from code review, not
-  yet fixed**: ARM is missing `WindSpeed_ms`/`WindDir_deg`/`TAS_ms`/`Roll_deg`/
-  `Pitch_deg`/`Heading_deg` even though `parsers/arm.py`'s `ARM_COLUMNS` already has
-  ready-named raw fields for all of them (only `Wind_W_ms`/`EDR_arm` were wired up);
-  ATTREX/POSIDON's `EDR_mms_log10kWkg`/`REYN_mms` use the same ×0.01 MMS-integer
-  scale confirmed for `Heading_deg` (raw maxes at exactly 36000) but not
-  independently confirmed for EDR/REYN specifically; new turbulence columns in
-  IPHEX/MPACE (and likely MC3E/OLYMPEX) bypass those files' existing fill-value
-  sentinel masking (no corruption found in the current build, but unguarded); and
-  `HARD_BOUNDS` in `scripts/qa_checks.py` uses one global Roll/Pitch range that
-  can't catch a per-family sign-convention inversion. See
-  `docs/dataset-changelog.md`'s 2026-07-13 entry for full detail.
+- **Turbulence columns (2026-07-13)**: schema is now just `Wind_U_ms`/
+  `Wind_V_ms`/`Wind_W_ms` + unified `EDR_m23s1` (see "Standard output schema"
+  above) — the wider attitude/airspeed column set from earlier the same day
+  was deliberately dropped, so the fill-value-masking and `HARD_BOUNDS`
+  follow-ups once tracked against those dropped columns no longer apply.
+  Two real bugs were found and fixed during the EDR-unification work: an
+  undocumented MMS `TEDR` fill-flag cluster (ATTREX/POSIDON, masked to NaN
+  pre-conversion) and a never-applied CRYSTAL-FACE-NASA wind scale
+  factor/sentinel (fixed in `load_mm_met_file`, eliminated what had been
+  QC4's entire 73,566-flag baseline). See
+  `docs/reports/2026-07-13-turbulence-scope-reduction-diagnostics.md` for
+  full detail.
 
 ## Running the pipeline
 
@@ -154,7 +168,7 @@ python main.py                          # rebuild L0 parquet + diagnostics + fig
 python scripts/qa_checks.py             # run all 9 QC checks
 python scripts/diagnose_cpi_fusion.py   # cross-check CPI images vs env data
 python scripts/build_data_tiers.py      # derive L1/L2 parquets from L0
-python scripts/diagnose_turbulence_coverage.py  # per-campaign wind/attitude/EDR coverage + EDR-family histograms
+python scripts/diagnose_turbulence_coverage.py  # per-campaign wind/EDR coverage + EDR-family histograms
 ```
 
 ## Logs & figs layout
@@ -169,7 +183,9 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 | `main.py` | `logs/pipeline/<ts>/` (output.log + campaign/Si/qv coverage CSVs) | `figs/all-campaigns/<ts>/` (via `plot_all_campaigns.py`, plots 01–12) |
 | `scripts/qa_checks.py` | `logs/qaqc/<ts>/` (00–09 CSVs) | `figs/qaqc/<ts>/` |
 | `scripts/diagnose_cpi_fusion.py` | `logs/cpi_fusion/<ts>/` | `figs/cpi_fusion/<ts>/` |
-| `scripts/diagnose_turbulence_coverage.py` | `logs/diagnose_turbulence_coverage/<ts>/` (coverage + attitude-sanity CSVs) | `figs/diagnose_turbulence_coverage/<ts>/` (EDR-family histograms) |
+| `scripts/diagnose_turbulence_coverage.py` | `logs/diagnose_turbulence_coverage/<ts>/` (coverage CSVs) | `figs/diagnose_turbulence_coverage/<ts>/` (wind/EDR-family histograms) |
+| `scripts/diagnose_qc3_merge_granularity.py` | `logs/qc3_merge_granularity/<ts>/` | `figs/qc3_merge_granularity/<ts>/` |
+| `scripts/analyze_crystal_diversity.py` | `logs/analyze_crystal_diversity/<ts>/` | `figs/analyze_crystal_diversity/<ts>/` |
 | `scripts/build_data_tiers.py` | `logs/build_data_tiers/<ts>/` (tier_summary.csv) | — |
 | `scripts/diagnose_data_tiers.py` | `logs/diagnose_data_tiers/<ts>/` (row counts + variable coverage CSVs) | `figs/diagnose_data_tiers/<ts>/` (funnel + coverage heatmap) |
 | `scripts/analyze_data_tiers.py` | `logs/analyze_data_tiers/<ts>/` (descriptive stats + L2 embedding/env correlation CSVs) | `figs/analyze_data_tiers/<ts>/` (distributions, embedding PCA scatter/correlation plots) |
@@ -180,6 +196,7 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 | `scripts/summarize_parser_recommendations.py` | reads `logs/campaign_missingness/latest/` by default | — |
 | `scripts/full_diagnostic.py` | — (console-only: variable stats, availability table, known-issue checks) | — |
 | `scripts/tests/test_{attrex,ice_l,iphex}.py` | `logs/campaign_tests/<campaign>/<ts>/` | `figs/campaign_tests/<campaign>/<ts>/` |
+| `scripts/tests/test_*.py` (remaining: airs_ii, combined_env_data, diagnose_campaign_missingness, macpex, posidon) | plain pytest unit tests; macpex/posidon write a flat `logs/test_<campaign>.log`, not the `<script>/<ts>/` layout | — |
 | `scripts/compare_derived_feature_versions.py` | `logs/compare_derived_feature_versions/<ts>/` (per-campaign summary stats + KS tests, `summary_report.md`) | `figs/compare_derived_feature_versions/<ts>/` (per-campaign feature histograms) |
 | `scripts/derive_particle_size_microns.py` | `logs/derive_particle_size_microns/<ts>/` (per-campaign micron size columns + coverage) | — |
 | `scripts/verify_cpi_size_distribution.py` | `logs/verify_cpi_size_distribution/<ts>/` (COCPIT-vs-SPEC PSD comparison CSVs) | `figs/verify_cpi_size_distribution/<ts>/` (aggregate + per-date mean-size comparison) |

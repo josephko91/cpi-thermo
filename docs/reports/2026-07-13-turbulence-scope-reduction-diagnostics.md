@@ -103,12 +103,22 @@ sentinel numbers like 99999; that was already gone before this final run.)
 
 `logs/diagnose_turbulence_coverage/20260713_211257/`
 
+**Correction (found during 2026-08-28 repo validation):** the log-path
+above was bumped to the post-fix rerun when this section was last edited
+(commit `9c02cf0`), but the CRYSTAL-FACE-NASA row below was not
+regenerated from that rerun — it's still the pre-missing-value-mask
+number. The correct value, confirmed by rerunning
+`diagnose_turbulence_coverage.py` against current code, is **81.5%**, not
+89.1% — masking the previously-unmasked `9999` sentinel legitimately
+removes some rows that had been miscounted as valid. See
+`docs/reports/2026-08-28-dataset-validation.md` for the current figure.
+
 | Campaign | Wind_U/V/W | EDR_m23s1 |
 |---|---:|---:|
 | AIRS-II | 96.9% | — |
 | ARM | 0% U/V, 100% W | 100% |
 | ATTREX | 43.9% | 43.6% |
-| CRYSTAL-FACE-NASA | 89.1% | — |
+| CRYSTAL-FACE-NASA | ~~89.1%~~ 81.5% (see correction above) | — |
 | CRYSTAL-FACE-UND | 77.7% | 93.1% |
 | ESCAPE | 0% U/V, 100% W | — |
 | ICE-L | ~100% | — |

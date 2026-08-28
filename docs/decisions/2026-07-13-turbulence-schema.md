@@ -1,8 +1,15 @@
 # 2026-07-13 — Turbulence/wind/attitude schema: why EDR is NOT unified
 
+**Superseded in part by `2026-07-13-edr-unification.md` (EDR unification) —
+that doc reverses this one's "keep EDR separate forever" conclusion.** This
+doc's reasoning for why wind/attitude columns *are* safely unified still
+applies and is cited elsewhere; read it for that, not for EDR's final
+treatment.
+
 ## Question
 
-Phase 1 of `docs/todo/2026-07-13-turbulence-measurements-plan.md` adds wind,
+Phase 1 of the turbulence-measurements implementation plan (2026-07-13, now
+shipped — see `docs/dataset-changelog.md`'s 2026-07-13 entry) adds wind,
 attitude, angle-of-attack/sideslip, and true-airspeed columns to the L0
 output. Physically-equivalent quantities (wind components, roll/pitch/
 heading, TAS) are unified into single columns across campaigns once
@@ -51,8 +58,6 @@ schema smell.
 
 ## Related
 
-- `docs/todo/2026-07-13-turbulence-measurements-plan.md` — the implementation
-  plan this decision was extracted from.
 - `docs/reports/2026-07-13-turbulence-measurements-survey.md` — the research
   survey that found the per-family variable/unit inventory.
 - `docs/decisions/2026-07-07-exact-second-merge-rewrite.md` — prior instance
