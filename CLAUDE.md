@@ -201,13 +201,24 @@ run) and refreshes a `<script>/latest` symlink, via the shared helper in
 | `scripts/derive_particle_size_microns.py` | `logs/derive_particle_size_microns/<ts>/` (per-campaign micron size columns + coverage) | — |
 | `scripts/verify_cpi_size_distribution.py` | `logs/verify_cpi_size_distribution/<ts>/` (COCPIT-vs-SPEC PSD comparison CSVs) | `figs/verify_cpi_size_distribution/<ts>/` (aggregate + per-date mean-size comparison) |
 | `scripts/verify_cpi_raw_image_sizes.py` | `logs/verify_cpi_raw_image_sizes/<ts>/` (raw-crop measurements + COCPIT comparison CSVs) | `figs/verify_cpi_raw_image_sizes/<ts>/` (size-distribution + per-date comparison plots) |
+| `scripts/join_cocpit_features.py` | `logs/join_cocpit_features/<ts>/` (match-coverage, feature-completeness, summary-stats CSVs) | — |
 
-The last four read an **external, unjoined** data source — the COCPIT vgg16
-derived-feature CSVs at
+The four scripts above `join_cocpit_features.py` read an **external,
+unjoined** data source — the COCPIT vgg16 derived-feature CSVs at
 `/Users/josephko/research/cocpit/final_databases/vgg16/<version>/<CAMPAIGN>.csv`
 plus products downloaded from NASA's ESPO archive — not
 `combined_env_data*.parquet`. They are not part of `main.py`'s pipeline and
 add no column to any tier.
+
+`scripts/join_cocpit_features.py` is the exception: it DOES join COCPIT
+v1.4.0's particle size/geometric/habit features onto L1/L2 via
+`cpi_filename`, but writes to new files
+(`data/out/combined_env_data_L1_cocpit.parquet`/`_L2_cocpit.parquet`)
+rather than the canonical L1/L2 parquets, since it depends on the same
+external, non-portable COCPIT path — see
+`docs/reports/2026-08-29-cocpit-particle-feature-join.md` for coverage
+results (overall ~30% of L1/L2 rows have a matched COCPIT feature row;
+per-campaign breakdown and known gaps in that report).
 
 `scripts/full_diagnostic.py` used to also write its own `figs/full_diagnostic/`
 figures, but 4 of its 6 distributions plus its Si-vs-Tair scatter duplicated
