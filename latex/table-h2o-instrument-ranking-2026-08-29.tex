@@ -1,0 +1,61 @@
+% Water-vapor instrument priority ranking (h2o_ranking) by campaign.
+% Source: config.yaml (per-campaign h2o_ranking lists), cross-checked
+% against parsers/olympex.py for the OLYMPEX single-instrument case.
+% Generated 2026-08-29 for the cpi-thermo dataset paper.
+%
+% Requires: \usepackage{booktabs}
+%
+% \input{latex/table-h2o-instrument-ranking-2026-08-29.tex}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Campaign-specific water-vapor instrument priority rankings
+    used to construct the combined $q_v$/$S_w$/$S_i$ column. For each
+    timestamp, the highest-ranked instrument with a valid reading was
+    used; lower-ranked instruments were used only when higher-ranked
+    ones were unavailable at that timestamp. Rankings are set in the
+    pipeline's \texttt{config.yaml} configuration file and can be
+    modified by the user, who can then regenerate the combined dataset.}
+  \label{tab:h2o-ranking}
+  \begin{tabular}{lllll}
+    \toprule
+    Campaign & Rank 1 & Rank 2 & Rank 3 & Rank 4 \\
+    \midrule
+    ARM                & Chilled mirror        &                  &     &      \\
+    AIRS-II            & Chilled mirror        &                  &     &      \\
+    ATTREX             & DLH                   & NOAA             & UCATS &    \\
+    CRYSTAL-FACE-NASA  & JLH                   & HW               & ALIAS &    \\
+    CRYSTAL-FACE-UND   & Lyman-alpha (unspec.) & Chilled mirror   &     &      \\
+    ESCAPE             & Chilled mirror        &                  &     &      \\
+    ICE-L              & Chilled mirror        & MRTDL            &     &      \\
+    IPHEX              & Chilled mirror        & Ophir TDL        &     &      \\
+    ISDAC              & Chilled mirror        &                  &     &      \\
+    MACPEX             & HWV                   & DLH              & JLH   & FISH \\
+    MC3E               & DLH                   &                  &     &      \\
+    MIDCIX             & JLH                   &                  &     &      \\
+    MPACE\textsuperscript{a} & --              &                  &     &      \\
+    OLYMPEX\textsuperscript{b} & Frost point   &                  &     &      \\
+    POSIDON            & DLH                   &                  &     &      \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.5em}
+  \begin{minipage}{\textwidth}
+    \footnotesize
+    \textsuperscript{a} No water-vapor instrument was flown on MPACE;
+    $q_v$ and $S_i$ are NaN for every record. \quad
+    \textsuperscript{b} OLYMPEX flew a single water-vapor instrument
+    (frost-point sensor), so no ranking was needed.
+
+    \vspace{0.3em}
+    Instrument abbreviations: DLH, Diode Laser Hygrometer; NOAA, NOAA-H2O
+    tunable diode laser hygrometer; UCATS, UCATS-H2O; JLH, JPL Laser
+    Hygrometer; HW/HWV, Harvard Water (Vapor); ALIAS, Aircraft Laser
+    Infrared Absorption Spectrometer; MRTDL, Maycomm AC19-400 dual-path
+    tunable diode laser hygrometer; FISH, Fast In-situ Stratospheric
+    Hygrometer. ``Chilled mirror'' and ``frost point'' denote a
+    campaign-specific chilled-mirror/frost-point hygrometer (distinct
+    physical instruments per campaign; see the dataset's instrument
+    inventory for individual manufacturer/model details where known).
+  \end{minipage}
+\end{table}
