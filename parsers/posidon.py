@@ -1,5 +1,5 @@
 """
-POSIDON (Profiling of Winter Storms) campaign data parser.
+POSIDON (Pacific Oxidants, Sulfur, Ice, Dehydration, and cONvection) campaign data parser.
 
 Campaign: POSIDON — 2016 NASA WB-57, Guam / western Pacific
 Data Format: NASA ICARTT (.ict) files, organised by instrument subdirectory

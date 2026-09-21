@@ -11,6 +11,11 @@ figs/*
 !figs/README.md
 # Reference PDFs (papers, meeting notes, archive downloads) — keep local, not in history
 *.pdf
+# do not include latex files
+latex/*
+
+# personal VS Code workspace files
+*.code-workspace
 
 # C extensions
 *.so
