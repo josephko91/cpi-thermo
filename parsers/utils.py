@@ -14,6 +14,32 @@ from typing import List, Optional
 # Molar mass ratio water / dry air (kg/kg per mol/mol)
 _EPSILON: float = 18.015 / 28.964  # ≈ 0.6220
 
+# Dataset-wide physical-plausibility range for ice supersaturation (Si).
+# Si < -1 is impossible (negative vapor pressure); Si > 2 is treated as an
+# instrument artefact. One rule for every campaign and every instrument: values
+# outside the range become NaN (never clamped to the bound). Parsers apply this
+# to each per-instrument Si_* column BEFORE the best-instrument Si is chosen
+# from the h2o_ranking, so a lower-ranked instrument can still fill in; main.py
+# applies it once more as a backstop and reports how many values it had to mask.
+SI_MIN: float = -1.0
+SI_MAX: float = 2.0
+
+
+def mask_si_out_of_range(si):
+    """Return ``si`` with values outside [SI_MIN, SI_MAX] replaced by NaN.
+
+    Accepts a pandas Series or anything ``np.asarray`` accepts (scalars
+    included). A Series returns a Series (index preserved); anything else
+    returns an ndarray. NaN and +/-inf: NaN stays NaN, +/-inf is masked.
+    Values exactly equal to a bound are kept.
+    """
+    if isinstance(si, pd.Series):
+        s = pd.to_numeric(si, errors="coerce").astype(float)
+        return s.where((s >= SI_MIN) & (s <= SI_MAX), np.nan)
+    arr = np.asarray(si, dtype=float)
+    with np.errstate(invalid="ignore"):
+        return np.where((arr >= SI_MIN) & (arr <= SI_MAX), arr, np.nan)
+
 
 # =============================================================================
 # Thermodynamic Functions

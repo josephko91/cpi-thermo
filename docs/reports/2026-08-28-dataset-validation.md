@@ -1,5 +1,10 @@
 # Dataset Validation Report — 2026-08-28
 
+> **Update 2026-09-21:** a later change replaced the campaign-specific Si bounds with one
+> dataset-wide [-1, 2] rule (out-of-range NaN, not clamped). Row counts, CPI fusion %, and
+> every QC count below reproduce except QC1 (6 → 4) and QC2 (80,648 → 80,608); see
+> `docs/dataset-changelog.md`. This report is otherwise the 2026-08-28 snapshot.
+
 Post repo-condensation rebuild and validation of L0/L1/L2. **No pipeline
 code changed** (`parsers/`, `main.py`, `config.yaml`, `scripts/build_data_tiers.py`
 all unchanged since the last parser commit, `9c02cf0`, 2026-07-13). This run

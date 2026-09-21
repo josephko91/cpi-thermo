@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from scripts.log_paths import timestamp as _run_timestamp, update_latest
 from parsers import CAMPAIGN_LOADERS
+from parsers.utils import SI_MIN, SI_MAX, mask_si_out_of_range
 from parsers.arm import extract_arm_standard
 from parsers.crystal_face_nasa import extract_crystal_face_nasa_standard
 from parsers.crystal_face_und import extract_crystal_face_und_standard
@@ -241,10 +242,22 @@ def process_campaign(
             "source_file": df_raw.get("source_file", ""),
         })
 
-    # Uniform Si floor/ceiling: Si < -1 is physically impossible; Si > 2 is
-    # almost certainly an instrument artefact across all campaigns.
+    # Dataset-wide Si plausibility range [SI_MIN, SI_MAX] (parsers/utils.py):
+    # Si < -1 is physically impossible; Si > 2 is treated as an instrument
+    # artefact. Out-of-range values become NaN (never clamped to the bound).
+    # Every parser already applies this to each per-instrument Si_* column
+    # before choosing the best-instrument Si, so this is a backstop; it
+    # reports how many values it had to mask (expected: 0).
     for col in [c for c in df_std.columns if c == "Si" or c.startswith("Si_")]:
-        df_std[col] = pd.to_numeric(df_std[col], errors="coerce").clip(-1.0, 2.0)
+        s = pd.to_numeric(df_std[col], errors="coerce")
+        masked = mask_si_out_of_range(s)
+        n_backstop = int((s.notna() & masked.isna()).sum())
+        if n_backstop:
+            logging.warning(
+                f"  {campaign_name}: backstop masked {n_backstop:,} {col} values "
+                f"outside [{SI_MIN}, {SI_MAX}] that the parser did not bound"
+            )
+        df_std[col] = masked
 
     # qv < 0 is physically impossible; clip negative values to NaN.
     for col in [c for c in df_std.columns if c == "qv" or c.startswith("qv_")]:

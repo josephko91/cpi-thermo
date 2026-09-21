@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Union, Dict, List, Optional
 from collections import defaultdict
 
-from .utils import round_timestamp_to_second, si_from_ppmv, qv_from_ppmv, sw_from_si, edr_from_mms_log10kWkg
+from .utils import round_timestamp_to_second, si_from_ppmv, qv_from_ppmv, sw_from_si, edr_from_mms_log10kWkg, SI_MIN, SI_MAX, mask_si_out_of_range
 
 
 # ---------------------------------------------------------------------------
@@ -503,13 +503,15 @@ def load_attrex(
                     df.loc[valid, wv_col], df.loc[valid, "T"], df.loc[valid, "P"]
                 )
 
-    # Sanity check all Si columns: |Si| > 10 is physically implausible
+    # Sanity check all Si columns against the dataset-wide plausibility range
+    # (before the best-instrument Si is chosen below, so a lower-ranked
+    # instrument can still fill in).
     for si_col in _si_col_map.values():
         if si_col in df.columns:
-            extreme = (df[si_col].abs() > 10) & df[si_col].notna()
-            if extreme.sum() > 0:
-                print(f"  Masking {extreme.sum():,} extreme {si_col} values (|Si| > 10)")
-                df.loc[extreme, si_col] = np.nan
+            out_of_range = ((df[si_col] < SI_MIN) | (df[si_col] > SI_MAX)) & df[si_col].notna()
+            if out_of_range.sum() > 0:
+                print(f"  Masking {out_of_range.sum():,} {si_col} values outside [{SI_MIN}, {SI_MAX}]")
+            df[si_col] = mask_si_out_of_range(df[si_col])
 
     # --- Si: fill from ranking ---
     ranking = h2o_ranking if h2o_ranking is not None else _DEFAULT_H2O_RANKING

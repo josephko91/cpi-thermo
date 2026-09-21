@@ -18,6 +18,41 @@ for per-investigation root-cause writeups.
 
 ---
 
+## 2026-09-21 — One dataset-wide Si plausibility bound [-1, 2] (out-of-range Si now NaN, never clamped)
+
+**See:** `docs/reports/2026-08-28-dataset-construction-and-qc.md` §2 step 4 and
+"Effect of the plausibility bounds on the L0 build".
+**Campaigns:** 15 (no change). **Schema:** no change. **Rows:** L0 4,572,581,
+L1 2,997,447, L2 1,828,818 — all unchanged; CPI fusion % unchanged (93.7% matched,
+57.2% with Tair_C and Si, 57.1% all seven core variables).
+
+The Si bound used to differ by campaign and was then clamped, not removed, by
+`main.py`: MACPEX NaN-masked outside [-1, 1]; CRYSTAL-FACE-NASA HW/ALIAS outside
+[-1, 2]; ESCAPE, ICE-L, ISDAC, IPHEX, OLYMPEX outside [-1, 5]; ATTREX only
+|Si| > 10; POSIDON clamped `Si_DLH` to [-1, 1]; the rest unbounded; and
+`main.py` then `.clip`-ed everything to [-1, 2], saturating 53 surviving values
+at the bound. Now one rule (`parsers/utils.py`: `SI_MIN`, `SI_MAX`,
+`mask_si_out_of_range`): any `Si`/`Si_*` outside [-1, 2] is NaN, applied to every
+per-instrument column before the best-instrument `Si` is chosen from the
+h2o_ranking; `main.py` keeps it as a backstop that logs anything it masks
+(0 in this build).
+
+Effect on L0 (before -> after): headline `Si` non-NaN 2,698,735 -> 2,698,719
+(ESCAPE -40, MACPEX +24 net); headline `qv` non-NaN 3,408,360 -> 3,408,320
+(ESCAPE -40, from the existing Si-mask-to-qv propagation); `Si` = 2.0 rows
+40 -> 0; per-instrument: `Si_chilled_mirror` -40 (ESCAPE), `Si_UCATS` -9,
+`Si_MRTDL` -4 (values in (2, 5] / (2, 10] that were saturated at 2.0), `Si_HWV`
++72 (MACPEX values in (1, 2] no longer masked). QC1 flags 6 -> 4; QC2 flags
+80,648 -> 80,608. L1, L2, and their COCPIT-joined copies are unchanged in
+row count and in `Si`/`qv` coverage (none of the changed L0 rows is a
+CPI-matched second).
+
+One judgment call: widening MACPEX from [-1, 1] to [-1, 2] re-admits 72
+`Si_HWV` values in (1, 2] that its parser had labeled cirrus-regime
+"artefacts". That follows directly from "one dataset-wide range".
+
+---
+
 ## 2026-08-28 — Repo docs condensation; L0/L1/L2 regenerated and validated (no dataset change)
 
 **See:** `docs/reports/2026-08-28-dataset-validation.md`.

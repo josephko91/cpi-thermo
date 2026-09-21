@@ -35,7 +35,7 @@ This repository provides tools and scripts to create a unified dataset that merg
    - Edit `config.yaml` as needed for your data and environment.
 4. **Run the main script:**
    ```
-   python main.py
+   python main.py --all
    ```
 
 ## Campaign Coverage Notes

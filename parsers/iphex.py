@@ -51,7 +51,7 @@ from typing import List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv, edr_from_und_cm23s1
+from .utils import es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv, edr_from_und_cm23s1, mask_si_out_of_range
 
 
 IPHEX_INVALID_VALUES = {
@@ -285,10 +285,7 @@ def load_iphex_file(
 
     # Si from chilled mirror (FrostPoint) — always computed as reference
     df["Si_chilled_mirror"] = _compute_si_from_frostpoint(df["FrostPoint"], df["Air_Temp"])
-    df.loc[
-        (df["Si_chilled_mirror"] < -1.0) | (df["Si_chilled_mirror"] > 5.0),
-        "Si_chilled_mirror",
-    ] = np.nan
+    df["Si_chilled_mirror"] = mask_si_out_of_range(df["Si_chilled_mirror"])
 
     # Si from Ophir TDL (MixingRatio ppmv) — present in 21/32 flights
     if "MixingRatio" in df.columns and "ophir-tdl" in h2o_ranking:
@@ -296,7 +293,7 @@ def load_iphex_file(
         mr = mr.where((mr >= _TDL_PPMV_MIN) & (mr <= _TDL_PPMV_MAX), np.nan)
         df["MixingRatio_ppmv"] = mr
         df["Si_ophir_tdl"] = _compute_si_from_ppmv(mr, df["Air_Temp"], df["STATIC_PR"])
-        df.loc[(df["Si_ophir_tdl"] < -1.0) | (df["Si_ophir_tdl"] > 5.0), "Si_ophir_tdl"] = np.nan
+        df["Si_ophir_tdl"] = mask_si_out_of_range(df["Si_ophir_tdl"])
 
     df["Si"] = _resolve_si_best(df, h2o_ranking)
 
@@ -371,9 +368,10 @@ def extract_iphex_standard(df: pd.DataFrame) -> pd.DataFrame:
         e_cm = es_ice_hPa(np.asarray(fp, dtype=float))
         qv_cm = qv_from_e_P(e_cm, np.asarray(p, dtype=float))
         # qv_cm is derived from the same FrostPoint/STATIC_PR pair as
-        # Si_chilled_mirror, which is already clipped to a plausible [-1, 5]
-        # range (line ~289). qv_from_e_P has no upper bound of its own, so
-        # propagate the Si clip's NaN mask to keep the two consistent —
+        # Si_chilled_mirror, which is already masked to the dataset-wide
+        # plausibility range [SI_MIN, SI_MAX] (line ~289). qv_from_e_P has no
+        # upper bound of its own, so propagate the Si mask's NaN to keep the two
+        # consistent —
         # otherwise a row with implausible Si can still carry an unbounded qv.
         si_cm = df.get("Si_chilled_mirror")
         if si_cm is not None:

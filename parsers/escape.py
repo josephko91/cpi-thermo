@@ -26,7 +26,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from .utils import clean_column_name, si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si, COMMON_NA_VALUES
+from .utils import clean_column_name, si_from_frost_point, es_ice_hPa, qv_from_e_P, sw_from_si, COMMON_NA_VALUES, mask_si_out_of_range
 
 
 ESCAPE_FILE_RE = re.compile(r"ESCAPE-Page0_Learjet_(\d{8})_R\d+\.ict$", re.IGNORECASE)
@@ -340,9 +340,8 @@ def load_escape_file(filepath: Union[str, Path]) -> Optional[pd.DataFrame]:
     # Derived variables
     if dew_col and temp_col:
         df["Si_chilled_mirror"] = si_from_frost_point(df[dew_col], df[temp_col])
-        # Plausibility: Si < -1 is impossible; very high values likely artifacts.
-        bad_si = (df["Si_chilled_mirror"] < -1) | (df["Si_chilled_mirror"] > 5)
-        df.loc[bad_si, "Si_chilled_mirror"] = np.nan
+        # Plausibility: dataset-wide Si range (parsers/utils.py SI_MIN/SI_MAX).
+        df["Si_chilled_mirror"] = mask_si_out_of_range(df["Si_chilled_mirror"])
     else:
         df["Si_chilled_mirror"] = np.nan
     df["Si"] = df["Si_chilled_mirror"]

@@ -47,7 +47,7 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import qv_from_ppmv, sw_from_si, round_timestamp_to_second, edr_from_mms_log10kWkg
+from .utils import qv_from_ppmv, sw_from_si, round_timestamp_to_second, edr_from_mms_log10kWkg, mask_si_out_of_range
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +288,9 @@ def load_posidon(
         e = (ppmv / 1e6) * P
         si.loc[valid] = (e / e_s) - 1
 
-    # Clip to physically meaningful range — DLH primary instrument
-    combined["Si_DLH"] = si.clip(-1.0, 1.0)
+    # Dataset-wide Si plausibility range (parsers/utils.py SI_MIN/SI_MAX):
+    # out-of-range values become NaN, not clamped — DLH primary instrument
+    combined["Si_DLH"] = mask_si_out_of_range(si)
     combined["Si"] = combined["Si_DLH"]
 
     return combined
