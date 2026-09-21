@@ -47,7 +47,7 @@ This folder contains Python modules for parsing and standardizing environmental 
   - Comma-delimited text files.
   - [Direct data access](https://www.archive.arm.gov/data/isdac2008/strapp-convair_bulk/CommaDelimited/)
 
-- **POSIDON (Profiling of Winter Storms):**
+- **POSIDON (Pacific Oxidants, Sulfur, Ice, Dehydration, and cONvection):**
   - [NASA ESPO Archive](https://espoarchive.nasa.gov/archive/browse/posidon)
   - NASA ICARTT files (`*.ict`).
 
