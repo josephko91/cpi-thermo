@@ -11,6 +11,8 @@ figs/*
 !figs/README.md
 # Reference PDFs (papers, meeting notes, archive downloads) — keep local, not in history
 *.pdf
+# do not incluce latex files
+latex/*
 
 # C extensions
 *.so
