@@ -5,6 +5,23 @@ variables, across all 15 campaigns. Companion machine-readable table:
 `docs/reports/2026-08-28-instrument-inventory.csv` (identical content, one
 row per instrument).
 
+**Update, 2026-08-31**: 6 water-vapor-instrument rows below were revised
+after an independent agent's fact-check of a companion LaTeX table
+(`latex/table-wv-instrument-specs-2026-08-31.tex`) was itself verified
+against this repo's raw archive rather than applied on faith. See that
+file's header comment for full sourcing. Changes: JLH's 15%/MACPEX figure
+confirmed correct (was doubted) and flagged as a preliminary, 2f-signal-
+only release; HW's response time corrected from "5–10 s" to "10 s" (raw
+header literally states "Data reported every 10 sec"); Ophir TDL's
+presence upgraded from "inferred" to "confirmed in raw header" (organization
+field reads "Ophir"); Maycomm AC19-400's model number softened to "not
+independently confirmed" (manufacturer attribution unaffected); ALIAS's
+measurement principle corrected (36 m/300 cm³/2.65 µm closed-path cell,
+not an 80 m Herriott cell) and its accuracy cell now cites a MACPEX
+hygrometer intercomparison's ~20% pairwise-difference finding instead of
+"not found"; NOAA-H2O's principle sharpened (closed-path, 2694 nm, 79 cm
+double-pass).
+
 ## Method
 
 Three sources, combined:
@@ -61,10 +78,13 @@ Three sources, combined:
   chilled mirror and Lyman-alpha hygrometer, OLYMPEX's frost-point
   sensor, and ISDAC's on-board RH-ice sensor. All are marked "unresolved"
   rather than guessed.
-- **`Si_FISH` and `Si_ALIAS` are effectively unused** — FISH is declared
-  in `config.yaml` for MACPEX but never wired to a raw data source
-  (always NaN in the output parquet); ALIAS has no documented accuracy
-  anywhere in the repo despite being loaded for CRYSTAL-FACE-NASA.
+- **`Si_FISH` is effectively unused** — declared in `config.yaml` for
+  MACPEX but never wired to a raw data source (always NaN in the output
+  parquet). `Si_ALIAS` *is* loaded for CRYSTAL-FACE-NASA, but still has
+  no standalone accuracy figure documented anywhere in the repo or public
+  literature checked; the closest available context is a MACPEX
+  hygrometer intercomparison's ~20% pairwise-difference finding among
+  several instruments (added 2026-08-31), not an ALIAS-specific spec.
 - **The CPI (Cloud Particle Imager) itself is included** as an instrument,
   even though it feeds no thermodynamic column — it's the source of the
   `cpi_filename` join key behind every row in L1/L2, and is arguably the
@@ -76,15 +96,15 @@ Three sources, combined:
 |---|---|---|---|---|---|---|
 | MMS (Meteorological Measurement System) | NASA Ames Research Center (PI: T. Paul Bui) | Air temp, static pressure, 3-D wind, EDR, (MACPEX) position/altitude/TAS | Tair_C, P_hPa, Wind_U/V/W_ms, EDR_m23s1, Lat/Lon/Alt_m (MACPEX only) | P/T: ±0.3 hPa, ±0.3 K. Wind: ±1.0 m/s (1σ). MACPEX alt: ±2.5–35 m. MACPEX TAS: ±1 m/s. | 1 Hz (desampled from 20 Hz, MACPEX) | ATTREX, POSIDON, MACPEX, CRYSTAL-FACE-NASA (Tair_C/P_hPa only, no uncertainty) |
 | Diode Laser Hygrometer (DLH) | NASA Langley (PI: Glenn S. Diskin) | Water vapor mixing ratio | Si_DLH, qv_dlh, H2O_DLH_ppmv | ATTREX/POSIDON: 5% or 1 ppmv. MACPEX: 10%. | 1 Hz | ATTREX, MACPEX, POSIDON, MC3E |
-| NOAA-H2O | NOAA (ESRL/Chemical Sciences) | Water vapor mixing ratio | Si_NOAA, qv_noaa, H2O_NOAA_ppmv | ±(5%+0.23 ppm) [WV], ±(6%+0.35 ppm) [eTW] | 1 Hz | ATTREX |
+| NOAA-H2O | NOAA (ESRL/Chemical Sciences) | Water vapor mixing ratio — closed-path, dual-channel TDL, 2694 nm, 79 cm double-pass, 2nd-harmonic detection (web-confirmed 2026-08-31) | Si_NOAA, qv_noaa, H2O_NOAA_ppmv | ±(5%+0.23 ppm) [WV], ±(6%+0.35 ppm) [eTW] | 1 Hz | ATTREX |
 | UCATS-H2O | NOAA | Water vapor mixing ratio | Si_UCATS, qv_ucats, H2O_UCATS_ppmv | 5%+1 ppm | ~1.5 s | ATTREX |
-| JPL Laser Hygrometer (JLH) | NASA JPL (PI: Robert Herman; MIDCIX also Robert Troy) | Water vapor mixing ratio | Si_JLH, qv_jlh | MACPEX: 15%. CRYSTAL-FACE-NASA/MIDCIX: none in header. | 1 Hz (implied) | CRYSTAL-FACE-NASA, MACPEX, MIDCIX |
-| Harvard Water Vapor (HW) | Harvard University (Anderson group) | Water vapor (Lyman-alpha) | Si_HW, qv_hw | ±5% | 5–10 s | CRYSTAL-FACE-NASA |
+| JPL Laser Hygrometer (JLH) | NASA JPL (PI: Robert Herman; MIDCIX also Robert Troy) | Water vapor mixing ratio | Si_JLH, qv_jlh | MACPEX: 15% (raw header; preliminary, 2f-signal-only release — confirmed 2026-08-31). CRYSTAL-FACE-NASA/MIDCIX: none in header. | 1 Hz (implied) | CRYSTAL-FACE-NASA, MACPEX, MIDCIX |
+| Harvard Water Vapor (HW) | Harvard University (Anderson group) | Water vapor (Lyman-alpha) | Si_HW, qv_hw | ±5% | 10 s (raw header: "Data reported every 10 sec" — corrected 2026-08-31 from an earlier 5–10 s estimate) | CRYSTAL-FACE-NASA |
 | Harvard Water Vapor (HWV) | Harvard University (PI: D.S. Sayres et al.) | Water vapor (Lyman-alpha + HHH) | Si_HWV, qv_hwv | Per-record ± columns; no single blanket % | 1 Hz | MACPEX |
-| ALIAS | NASA JPL | Water vapor (one channel of a multi-gas spectrometer) | Si_ALIAS, qv_alias | Not found in repo | Not found in repo | CRYSTAL-FACE-NASA |
+| ALIAS | NASA JPL | Water vapor — closed-path multipass cell (~36 m path, 300 cm³ volume), TDL absorption at 2.65 µm, one channel of a multi-gas spectrometer (principle corrected 2026-08-31; was previously described as an 80 m Herriott cell, which is a different ALIAS-II trace-gas configuration) | Si_ALIAS, qv_alias | Not independently confirmed as a standalone figure; a MACPEX hygrometer intercomparison (Rollins et al. 2014, JGR, doi:10.1002/2013JD020817) found ~20% (0.8 ppmv) pairwise differences among compared instruments (incl. ALIAS) below 5 ppmv | ~3–30 s integration (typical for this instrument's other channels) | CRYSTAL-FACE-NASA |
 | FISH | **External:** Forschungszentrum Jülich, Germany | Water vapor (Lyman-alpha fluorescence) | Si_FISH (declared, never loaded — always NaN) | **External:** ~5–8% | **External:** ~1 Hz | MACPEX (declared, not implemented) |
-| Ophir TDL | **Low-confidence:** Ophir Corporation, Littleton CO (inferred from raw header text "Ophir") | Water vapor / dew-frost point | Si_ophir_tdl, qv_ophir_tdl | Not found. Repo documents ~0.32 Si dry bias vs. chilled mirror on 21/32 flights. | 1 Hz (implied) | IPHEX |
-| Maycomm AC19-400 | Maycomm Research Company / Maycomm Inc. (R.D. May) — **confirmed via web search** | Water vapor, dual optical path (~130 cm / ~10 cm) | Si_MRTDL, qv_mrtdl, MRTDLL_MC_ppmv | Not found in repo | 1 Hz | ICE-L |
+| Ophir TDL | Ophir Corporation, Littleton CO — presence **confirmed** directly in `data/raw/IPHEX/*.iphex` (organization field reads "Ophir"); corporate attribution itself not independently confirmed elsewhere (upgraded 2026-08-31 from "inferred") | Water vapor / dew-frost point | Si_ophir_tdl, qv_ophir_tdl | Not found. Repo documents ~0.32 Si dry bias vs. chilled mirror on 21/32 flights. | 1 Hz (implied) | IPHEX |
+| Maycomm dual-path TDL hygrometer | Maycomm Research Company / Maycomm Inc. (R.D. May), Pasadena CA — **confirmed via web search**; "AC19-400" model designation is per the parser's own comment, **not independently confirmed** by raw NetCDF metadata or public documentation (softened 2026-08-31) | Water vapor, dual optical path (~130 cm / ~10 cm) | Si_MRTDL, qv_mrtdl, MRTDLL_MC_ppmv | Not found in repo | 1 Hz | ICE-L |
 | Lyman-alpha hygrometer (unspecified) | **Unresolved** — UND team, repo notes "potentially JLH?" | Water vapor mixing ratio | Si_LH_unspecified, qv_lh_unspecified | Not found | 1 Hz (implied) | CRYSTAL-FACE-UND |
 | Frost-point sensor (unspecified) | **Unresolved** — UND team | Frost-point temp → Si | Si_frost_point, qv_frost_point | Not found | 1 Hz (implied) | OLYMPEX |
 | Chilled-mirror hygrometer (ARM cryo unit) | **Unresolved** — ARM archive is binary, no text metadata | Dew/frost-point temp | Si_chilled_mirror, qv_chilled_mirror | ±0.3–0.5°C (general literature, **not** raw-traceable) | 1 Hz | ARM |
