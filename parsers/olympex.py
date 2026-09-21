@@ -24,6 +24,7 @@ from .utils import (
     sw_from_si,
     wind_speed_dir_to_uv,
     COMMON_NA_VALUES,
+    mask_si_out_of_range,
 )
 
 
@@ -83,12 +84,8 @@ def load_olympex_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # Calculate Si from frost point (instrument unspecified)
     if "FrostPoint" in df.columns and "Air_Temp" in df.columns:
         df["Si_frost_point"] = si_from_frost_point(df["FrostPoint"], df["Air_Temp"])
-        # Plausibility bound, matching the [-1, 5] convention used for the
-        # equivalent chilled-mirror Si in other campaigns (e.g. IPHEX).
-        df.loc[
-            (df["Si_frost_point"] < -1.0) | (df["Si_frost_point"] > 5.0),
-            "Si_frost_point",
-        ] = np.nan
+        # Dataset-wide Si plausibility range (parsers/utils.py SI_MIN/SI_MAX).
+        df["Si_frost_point"] = mask_si_out_of_range(df["Si_frost_point"])
         # Physical implausibility: FrostPoint noticeably above Air_Temp at a
         # non-cirrus (near-0C or warmer) temperature is a mirror-fault
         # signature, not real supersaturation -- e.g. flight
@@ -176,7 +173,7 @@ def extract_olympex_standard(df: pd.DataFrame) -> pd.DataFrame:
         e_fp = es_ice_hPa(fp)
         qv_fp = qv_from_e_P(e_fp, p_hpa)
         # qv_fp is derived from the same FrostPoint/STATIC_PR pair as
-        # Si_frost_point, which is clipped to a plausible [-1, 5] range above.
+        # Si_frost_point, which is masked to the dataset-wide Si range above.
         # qv_from_e_P has no upper bound of its own, so propagate the Si
         # clip's NaN mask to keep the two consistent.
         si_fp = df.get("Si_frost_point")

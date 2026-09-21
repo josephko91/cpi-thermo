@@ -44,6 +44,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.log_paths import timestamp as _run_timestamp, update_latest
+from parsers.utils import SI_MIN, SI_MAX
 
 DATA_DIR  = REPO_ROOT / "data/raw/IPHEX"
 # Timestamped so re-running this test doesn't overwrite a previous run's
@@ -128,7 +129,7 @@ def _load_all() -> pd.DataFrame:
                 fp  = df["FrostPoint"].to_numpy(dtype=float)
                 t   = df["Air_Temp"].to_numpy(dtype=float)
                 si  = _si_from_frost_point(fp, t)
-                si[(si < -1) | (si > 5)] = np.nan
+                si[(si < SI_MIN) | (si > SI_MAX)] = np.nan
                 df["Si_chilled_mirror"] = si
             else:
                 df["Si_chilled_mirror"] = np.nan
@@ -139,7 +140,7 @@ def _load_all() -> pd.DataFrame:
                 t   = df["Air_Temp"].to_numpy(dtype=float)
                 p   = df["STATIC_PR"].to_numpy(dtype=float)
                 si  = _si_from_ppmv(mr, t, p)
-                si[(si < -1) | (si > 5)] = np.nan
+                si[(si < SI_MIN) | (si > SI_MAX)] = np.nan
                 df["Si_TDL"]         = si
                 df["MixingRatio_ppmv"] = mr
             else:
@@ -151,7 +152,7 @@ def _load_all() -> pd.DataFrame:
                 dp  = _coerce_and_mask(df["DEWPT"]).to_numpy(dtype=float)
                 t   = df["Air_Temp"].to_numpy(dtype=float)
                 si  = _si_from_frost_point(dp, t)
-                si[(si < -1) | (si > 5)] = np.nan
+                si[(si < SI_MIN) | (si > SI_MAX)] = np.nan
                 df["Si_DEWPT"] = si
             else:
                 df["Si_DEWPT"] = np.nan
@@ -256,14 +257,14 @@ def test_csi_absent():
 
 
 def test_si_values_plausible():
-    """All Si columns must lie in [-1, 5] after masking."""
+    """All Si columns must lie in the dataset-wide [SI_MIN, SI_MAX] after masking."""
     df = _load_all()
     for col in ("Si_chilled_mirror", "Si_TDL", "Si_DEWPT"):
         s = df[col].dropna()
         if len(s) == 0:
             continue
-        assert s.min() >= -1.01, f"{col} below -1: min={s.min():.4f}"
-        assert s.max() <= 5.01,  f"{col} above 5: max={s.max():.4f}"
+        assert s.min() >= SI_MIN, f"{col} below {SI_MIN}: min={s.min():.4f}"
+        assert s.max() <= SI_MAX, f"{col} above {SI_MAX}: max={s.max():.4f}"
 
 
 # ---------------------------------------------------------------------------

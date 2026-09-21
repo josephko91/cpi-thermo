@@ -40,7 +40,7 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import es_ice_hPa, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv
+from .utils import es_ice_hPa, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv, mask_si_out_of_range
 
 
 # ---------------------------------------------------------------------------
@@ -242,9 +242,8 @@ def load_isdac_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # -------------------------------------------------------------------
     df["Si_chilled_mirror"] = df["ReHuI"] / 100.0 - 1.0
     df.loc[~np.isfinite(df["Si_chilled_mirror"].to_numpy(dtype=float)), "Si_chilled_mirror"] = np.nan
-    # Physical plausibility: allow a slight margin beyond [-1, 1] for genuine
-    # supersaturation extremes, but cap extreme outliers
-    df.loc[(df["Si_chilled_mirror"] < -1.0) | (df["Si_chilled_mirror"] > 5.0), "Si_chilled_mirror"] = np.nan
+    # Physical plausibility: dataset-wide Si range (parsers/utils.py SI_MIN/SI_MAX)
+    df["Si_chilled_mirror"] = mask_si_out_of_range(df["Si_chilled_mirror"])
     df["Si"] = df["Si_chilled_mirror"]
 
     # -------------------------------------------------------------------

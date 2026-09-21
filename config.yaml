@@ -125,7 +125,7 @@ campaigns:
       (DLH-H2O/, MMS/, NOAA-H2O/). Si is derived from DLH water vapour
       (DLH-H2O_H2O_ppmv) and MMS meteorology (MMS-1HZ_T × 0.01 → K,
       MMS-1HZ_P × 0.01 → hPa) using the Tetens ice formula.
-      Si is clipped to [-1, 1].
+      Si outside the dataset-wide range [-1, 2] (parsers/utils.py SI_MIN/SI_MAX) is set to NaN.
 
   ESCAPE:
     path: ./data/raw/ESCAPE/spec-learjet-state
@@ -149,7 +149,8 @@ campaigns:
       NASA ICARTT (.ict) files organised in instrument subdirectories
       (DLH-H2O/, HWV/, JLH/, MMS-MetData/, etc.). Si is derived from DLH
       water vapour (DLH-H2O_H2O_ppmv) and MMS meteorology (T × 0.01 → K,
-      P × 0.1 → hPa) using the Tetens ice formula. Si is clipped to [-1, 1].
+      P × 0.1 → hPa) using the Tetens ice formula. Si outside the dataset-wide range
+      [-1, 2] (parsers/utils.py SI_MIN/SI_MAX) is set to NaN.
 
   ICE-L:
     path: ./data/raw/ICE-L

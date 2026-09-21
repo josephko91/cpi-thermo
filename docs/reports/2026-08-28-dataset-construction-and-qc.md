@@ -62,11 +62,19 @@ parser follows the same processing sequence:
    `-9999`, `-7777`, `9.9999E+30`, plus campaign-specific sentinels found
    during QC4 investigations) with NaN before any downstream calculation,
    never after (per-project convention, stated in CLAUDE.md).
-4. **Physical-plausibility clipping** — applied uniformly in `main.py`
-   after every parser returns: `Si`/`Si_*` clipped to [-1, 2] (values
-   outside are physically impossible or near-certain instrument
-   artifacts), `qv`/`qv_*` floored at 0 (negative mixing ratios are
-   impossible) and set to NaN below it.
+4. **Physical-plausibility bounds** — one dataset-wide rule, defined once in
+   `parsers/utils.py` (`SI_MIN = -1`, `SI_MAX = 2`, `mask_si_out_of_range`):
+   any `Si`/`Si_<instrument>` value outside [-1, 2] is set to NaN (never
+   clamped to the bound), and any negative `qv`/`qv_<instrument>` value is set
+   to NaN. Each parser applies the Si rule to every per-instrument `Si_*`
+   column *before* the best-instrument `Si` is chosen from the h2o_ranking, so
+   a lower-ranked instrument can still fill in when a higher-ranked one is
+   out of range; `main.py` then applies the same rule once more as a backstop
+   and logs any value it had to mask (0 in the current build). Values outside
+   these bounds are treated as physically impossible or near-certain
+   instrument artifacts. Measured effect: "Effect of the plausibility bounds"
+   below. (Before 2026-09-21 the bounds differed by campaign — [-1, 1], [-1, 2],
+   [-1, 5], |Si| > 10, or a clamp — see `docs/dataset-changelog.md`.)
 5. **Timestamp flooring** — every timestamp floored (not rounded) to the
    nearest whole second (`parsers/utils.py::round_timestamp_to_second`),
    the merge key for every cross-instrument join within a campaign (see
@@ -77,6 +85,75 @@ parser follows the same processing sequence:
    never a `merge_asof` tolerance (repo-wide policy since
    `docs/decisions/2026-07-07-exact-second-merge-rewrite.md`, GitHub issue
    #12).
+
+### Effect of the plausibility bounds on the L0 build
+
+Measured 2026-09-21 on the L0 build made the same day with the uniform bound
+above (4,572,581 rows). Method: the full pipeline was run twice in a scratch
+copy of the repo, once as shipped and once with `SI_MIN`/`SI_MAX` opened to
++/-1e12, wrapping each extractor to snapshot its output before `main.py`'s
+backstop/floor; the unbounded run is the counterfactual. Non-NaN `Si` and `qv`
+counts from the shipped run match the parquet exactly. Nothing under
+`data/out/` was written by the measurement.
+
+**Ice supersaturation (`Si`, the best-instrument column).** Of 2,700,278
+rows with a valid unbounded `Si`, **1,560 (0.058%; 0.034% of all L0 rows)**
+fall outside [-1, 2]; all are above 2, none below -1. All are removed (set to
+NaN); none is saturated at the bound, and no `Si` = 2.0 remains in the
+parquet.
+
+| Campaign | Valid `Si` | Outside [-1, 2] | Rows losing `Si` |
+|---|---:|---:|---:|
+| CRYSTAL-FACE-NASA | 163,765 | 1,286 (0.79%) | 1,286 |
+| ESCAPE | 58,524 | 272 (0.46%) | 272 |
+| MACPEX | 195,018 | 2 | 1\* |
+| all other campaigns | 2,282,971 | 0 | 0 |
+| **Total** | **2,700,278** | **1,560** | **1,559** |
+
+\* MACPEX has two out-of-range `Si_HWV` values (2.005 and 2.217); at the second
+one the lower-ranked `Si_JLH` (-0.815) is valid, so the best-instrument `Si`
+falls back to it instead of going missing.
+
+At the per-instrument level (`Si_*` columns), 2,660 of 3,814,441 values
+(0.070%) are outside [-1, 2].
+
+**Water-vapor mixing ratio (`qv`, best-instrument column).** Negative
+values occur only in POSIDON (`qv_dlh`): **3,870 values, 2.03% of
+POSIDON's 190,418 and 0.113% of the 3,413,748 valid unbounded `qv` values
+(0.085% of all L0 rows)**, all set to NaN. A further 1,558 `qv` values
+(1,286 CRYSTAL-FACE-NASA, 272 ESCAPE) are lost because those parsers
+propagate the `Si` NaN mask to `qv`. After all bounds, 3,408,320 `qv` values
+remain (matches the parquet).
+
+**How much of this is because upstream filtering already removed the extremes.**
+Most of it. The figures above are measured *after* the pipeline's other
+value-validity masks, which run before any Si/qv bound and remove most
+physically impossible readings first. To size that, the same scratch
+counterfactual was extended by switching those masks off cumulatively (fill
+sentinels and PI quality flags stay applied throughout, since those mark
+missing data rather than measured values):
+
+| Upstream filters also removed | Valid `Si` | `Si` outside [-1, 2] | Valid `qv` | `qv` < 0 |
+|---|---:|---:|---:|---:|
+| none (Si bound off only; figures above) | 2,700,278 | 1,560 (0.058%) | 3,413,748 | 3,870 (0.113%) |
+| + non-positive H2O masks (ATTREX, MACPEX, CRYSTAL-FACE-NASA, POSIDON DLH > 0) | 2,703,995 | 5,277 (0.195%) | 3,446,367 | 67,848 (1.97%) |
+| + TDL ppmv-range and T/P-range masks | 2,703,995 | 5,277 (0.195%) | 3,446,471 | 67,848 (1.97%) |
+| + humidity-vs-temperature sanity masks (ARM cryo > Tair + 1 C, IPHEX/OLYMPEX frost-point checks, ICE-L RHUM range, ESCAPE dew-point range) | 2,729,597 | 10,766 (0.394%) | 3,472,073 | 67,848 (1.95%) |
+| + the input guard inside `si_from_ppmv` (ppmv <= 0, P <= 0, T outside 150-350 K) | 2,734,810 | 31,811 (1.163%) | 3,472,073 | 67,848 (1.95%) |
+
+With every such filter off, `Si` outside [-1, 2] rises from 0.06% to 1.2%
+and negative `qv` from 0.11% to 1.95%. The added values are concentrated in a
+few sources: ATTREX (21,044 `Si` < -1 and 63,977 negative `qv`, from
+non-positive DLH/NOAA/UCATS readings), ARM (5,035 `Si` > 2 where the cryo
+frost point exceeds air temperature), POSIDON (3,717 `Si` < -1), and ICE-L
+(454 `Si` > 2 from RHUM outside [-20, 200]%). The ppmv-range and T/P-range
+masks change no out-of-range counts. So the published bound is a last line
+of defense against a residue; the instrument-validity masks do most of the
+artifact removal, and the 0.06% / 0.11% figures should be read as the residue
+after them, not the total fraction of raw readings that were implausible.
+Two things are not counted at all: fill-value sentinels (e.g. -9999) and the
+PI-supplied quality flags in the ICARTT files, and negative raw readings in
+ATTREX/MACPEX that were masked with NaN and zeros in a combined count.
 
 ### Campaign-specific fixes applied during pre-processing
 
@@ -138,13 +215,14 @@ flag counts.
 | QC8 | Vertical profile plausibility | Bins `Tair_C`/`qv` by pressure level (11 standard levels, 1050→0 hPa) and compares against the ICAO standard atmosphere temperature profile and saturation-vapor-pressure bounds. |
 | QC9 | LWC cross-check (severe Si flags) | Re-reads raw liquid-water-content data for IPHEX/OLYMPEX's severe `Si > 1.05` flags (LWC isn't part of the standard schema) to distinguish real in-cloud/precipitation contamination from likely sensor error. |
 
-**Latest results** (2026-08-28, reproduced exactly from current code — see
-`docs/reports/2026-08-28-dataset-validation.md`):
+**Latest results** (2026-09-21 rebuild with the uniform Si bound; the 2026-08-28
+baseline in `docs/reports/2026-08-28-dataset-validation.md` differed only in
+QC1 = 6 and QC2 = 80,648, see `docs/dataset-changelog.md`):
 
 | Check | Flags | % of dataset | Campaigns affected |
 |---|---:|---:|---:|
-| QC1 | 6 | 0.000% | 1 |
-| QC2 | 80,648 | 1.764% | 12 |
+| QC1 | 4 | 0.000% | 1 |
+| QC2 | 80,608 | 1.763% | 12 |
 | QC3 | 365 | 0.008% | 6 |
 | QC4 | 0 | 0.000% | 0 |
 | QC5 | 0 | 0.000% | 5 |

@@ -55,7 +55,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from .utils import si_from_rh, si_from_ppmv, es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv
+from .utils import si_from_rh, si_from_ppmv, es_ice_hPa, qv_from_ppmv, qv_from_e_P, sw_from_si, wind_speed_dir_to_uv, mask_si_out_of_range
 
 
 ICE_L_FILE_RE = re.compile(
@@ -221,7 +221,7 @@ def load_ice_l_file(
 
         # ---- Chilled-mirror path (RHUM -> Si) ------------------------------
         si_chilled = si_from_rh(rhum)
-        si_chilled[(si_chilled < -1) | (si_chilled > 5)] = np.nan
+        si_chilled = mask_si_out_of_range(si_chilled)
 
         # ---- TDL long-path (MRTDLL_MC ppmv -> Si) --------------------------
         mrtdl_var = _pick_var(ds, ["MRTDLL_MC"])
@@ -235,7 +235,7 @@ def load_ice_l_file(
             mrtdl_ppmv = np.full(n, np.nan)
 
         si_mrtdl = si_from_ppmv(mrtdl_ppmv, tair_c + 273.15, psxc_hpa)
-        si_mrtdl[(si_mrtdl < -1) | (si_mrtdl > 5)] = np.nan
+        si_mrtdl = mask_si_out_of_range(si_mrtdl)
 
         # ---- Position ------------------------------------------------------
         lat_name = _pick_var(ds, ["LAT", "LATC", "GGLAT"])

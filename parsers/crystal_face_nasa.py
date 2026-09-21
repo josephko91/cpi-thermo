@@ -27,6 +27,7 @@ from .utils import (
     qv_from_e_P,
     sw_from_si,
     round_timestamp_to_second as _round_timestamp_to_second,
+    mask_si_out_of_range,
 )
 
 
@@ -426,7 +427,7 @@ def load_crystal_face_nasa_file(filepath: Union[str, Path]) -> pd.DataFrame:
     # Calculate Si from RH (relative humidity w.r.t. ice) — JLH instrument
     rh_col = next((c for c in df.columns if "rh" in c.lower()), None)
     if rh_col:
-        df["Si_JLH"] = si_from_rh(df[rh_col])
+        df["Si_JLH"] = mask_si_out_of_range(si_from_rh(df[rh_col]))
         df["RH_JLH"] = df[rh_col]  # store for qv_jlh computation later
     
     # Convert temperature from Kelvin to Celsius if present
@@ -716,9 +717,7 @@ def load_crystal_face_nasa(
                         hw_mm.loc[valid, "T_K"],
                         hw_mm.loc[valid, "P_hPa"],
                     )
-                    hw_mm.loc[
-                        (hw_mm["Si_HW"] < -1.0) | (hw_mm["Si_HW"] > 2.0), "Si_HW"
-                    ] = np.nan
+                    hw_mm["Si_HW"] = mask_si_out_of_range(hw_mm["Si_HW"])
                 # Also derive T_C from MM for HW rows
                 hw_mm["T_C_HW"] = hw_mm["T_K"] - 273.15
                 # qv_hw from ppmv (no pressure needed)
@@ -765,9 +764,7 @@ def load_crystal_face_nasa(
                         alias_mm.loc[valid, "T_K"],
                         alias_mm.loc[valid, "P_hPa"],
                     )
-                    alias_mm.loc[
-                        (alias_mm["Si_ALIAS"] < -1.0) | (alias_mm["Si_ALIAS"] > 2.0), "Si_ALIAS"
-                    ] = np.nan
+                    alias_mm["Si_ALIAS"] = mask_si_out_of_range(alias_mm["Si_ALIAS"])
                 alias_mm["T_C_ALIAS"] = alias_mm["T_K"] - 273.15
                 alias_mm["qv_alias"] = qv_from_ppmv(alias_mm["H2O_ppmv"])
                 alias_si = alias_mm[["Timestamp", "Si_ALIAS", "T_C_ALIAS", "qv_alias"]].dropna(subset=["Si_ALIAS"])

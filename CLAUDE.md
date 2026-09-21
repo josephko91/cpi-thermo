@@ -92,6 +92,11 @@ final column list — supersedes the wider list in
 - All timestamps UTC (`tz_localize("UTC")` or `tz_convert("UTC")`)
 - Si = ice supersaturation (dimensionless); Sw = liquid supersaturation; qv in g/kg
 - Fill values → NaN before returning from `load_*()`, not after
+- **One Si plausibility range for the whole dataset**: `Si`/`Si_<instrument>` outside
+  [-1, 2] → NaN (never clamped), negative `qv`/`qv_<instrument>` → NaN. Defined once in
+  `parsers/utils.py` (`SI_MIN`, `SI_MAX`, `mask_si_out_of_range`); every parser applies it to
+  each per-instrument `Si_*` column *before* the best-instrument `Si` is chosen, and
+  `main.py` re-applies it as a backstop. Don't add per-campaign Si bounds.
 - Never commit parquet files, plots, or `logs/` — all gitignored
 
 ## Campaigns
@@ -120,7 +125,8 @@ coverage-moving bugfixes). Current dataset (L0): 15 campaigns, 4,572,581 rows (g
 4,572,581 on 2026-07-13 when ARM's L0 rows were floored from native 4 Hz to 1 Hz,
 see `docs/dataset-changelog.md`); reproduced exactly (row counts, all 9 QC
 checks, CPI fusion %) from current code on 2026-08-28, see
-`docs/reports/2026-08-28-dataset-validation.md`. CPI/env fusion 93.7%
+`docs/reports/2026-08-28-dataset-validation.md`; rebuilt 2026-09-21 with the uniform Si bound (row counts and
+CPI fusion % unchanged; QC1 6→4, QC2 80,648→80,608 — see `docs/dataset-changelog.md`). CPI/env fusion 93.7%
 matched overall (57.2% with both Tair_C and Si) — run
 `python scripts/diagnose_cpi_fusion.py` for the full per-campaign breakdown. Key
 open items:
@@ -164,7 +170,7 @@ open items:
 ## Running the pipeline
 
 ```bash
-python main.py                          # rebuild L0 parquet + diagnostics + figures
+python main.py --all                    # rebuild L0 parquet + diagnostics + figures
 python scripts/qa_checks.py             # run all 9 QC checks
 python scripts/diagnose_cpi_fusion.py   # cross-check CPI images vs env data
 python scripts/build_data_tiers.py      # derive L1/L2 parquets from L0

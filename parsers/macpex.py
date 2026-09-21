@@ -55,7 +55,7 @@ from typing import Dict, List, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 
-from .utils import si_from_ppmv, qv_from_ppmv, sw_from_si, round_timestamp_to_second
+from .utils import si_from_ppmv, qv_from_ppmv, sw_from_si, round_timestamp_to_second, SI_MIN, SI_MAX, mask_si_out_of_range
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +138,7 @@ H2O_RANK_TO_WV: Dict[str, WvSource] = {
 T_BOUNDS_K    = (150.0, 350.0)   # MACPEX WB-57 tropopause region
 P_BOUNDS_HPA  = (10.0,  1100.0)
 WV_MIN_PPMV   = 0.0
-SI_BOUNDS     = (-1.0, 1.0)      # cirrus UT regime; outside = artefact
+# Si plausibility range is dataset-wide: parsers.utils.SI_MIN / SI_MAX.
 
 
 # ---------------------------------------------------------------------------
@@ -613,17 +613,15 @@ def load_macpex(
         )
 
     # ------------------------------------------------------------------
-    # 6. Clip Si to physically plausible range for cirrus / UT
+    # 6. Mask Si outside the dataset-wide plausibility range
     # ------------------------------------------------------------------
-    n_clipped = ((df["Si"] < SI_BOUNDS[0]) | (df["Si"] > SI_BOUNDS[1])).sum()
+    n_clipped = int(((df["Si"] < SI_MIN) | (df["Si"] > SI_MAX)).sum())
     if n_clipped:
         print(
             f"  Masking {n_clipped:,} Si values outside "
-            f"[{SI_BOUNDS[0]}, {SI_BOUNDS[1]}] (instrument artefacts)"
+            f"[{SI_MIN}, {SI_MAX}] (instrument artefacts)"
         )
-    df.loc[
-        (df["Si"] < SI_BOUNDS[0]) | (df["Si"] > SI_BOUNDS[1]), "Si"
-    ] = np.nan
+    df["Si"] = mask_si_out_of_range(df["Si"])
 
     # ------------------------------------------------------------------
     # 6b. Expose primary source as its named instrument column
@@ -645,9 +643,7 @@ def load_macpex(
                 df.loc[alt_valid, "T_K"],
                 df.loc[alt_valid, "P_hPa"],
             )
-            df.loc[
-                (df[si_col] < SI_BOUNDS[0]) | (df[si_col] > SI_BOUNDS[1]), si_col
-            ] = np.nan
+            df[si_col] = mask_si_out_of_range(df[si_col])
             print(
                 f"  Also computed {si_col} using {alt_col} "
                 f"({alt_valid.sum():,} valid rows)"

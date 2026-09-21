@@ -21,6 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.log_paths import timestamp as _run_timestamp, update_latest
+from parsers.utils import SI_MIN, SI_MAX
 
 DATA_DIR = REPO_ROOT / "data/raw/ATTREX"
 CPI_CSV = REPO_ROOT / "data/raw/cpi_embeddings_timestamps.csv"
@@ -130,7 +131,7 @@ def test_temperature_physical_range():
 
 
 def test_si_values_in_plausible_range():
-    """Si should be in [-1, 10] after masking."""
+    """Si should be in the dataset-wide [SI_MIN, SI_MAX] after masking."""
     df = _load_attrex_cached()
     for col in ("Si_DLH", "Si_NOAA", "Si_UCATS", "Si_best"):
         if col not in df.columns:
@@ -138,8 +139,8 @@ def test_si_values_in_plausible_range():
         s = df[col].dropna()
         if len(s) == 0:
             continue
-        assert s.min() >= -1.01, f"{col} below -1: min={s.min():.4f}"
-        assert s.max() <= 10.01, f"{col} above 10: max={s.max():.4f}"
+        assert s.min() >= SI_MIN, f"{col} below {SI_MIN}: min={s.min():.4f}"
+        assert s.max() <= SI_MAX, f"{col} above {SI_MAX}: max={s.max():.4f}"
 
 
 def test_h2o_mixing_ratio_positive():

@@ -27,6 +27,7 @@ from .utils import (
     round_timestamp_to_second,
     wind_speed_dir_to_uv,
     COMMON_NA_VALUES,
+    mask_si_out_of_range,
 )
 
 
@@ -151,7 +152,7 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
     if not met_path.exists():
         df_mis["Tair"] = np.nan
         if "RH" in df_mis.columns:
-            df_mis["Si_LH_unspecified"] = si_from_rh(df_mis["RH"])
+            df_mis["Si_LH_unspecified"] = mask_si_out_of_range(si_from_rh(df_mis["RH"]))
             df_mis["Si"] = df_mis["Si_LH_unspecified"]
         else:
             df_mis["Si_LH_unspecified"] = np.nan
@@ -193,7 +194,7 @@ def load_crystal_face_und_file(filepath_mis: Union[str, Path]) -> pd.DataFrame:
     
     # Calculate Si from RH — laser hygrometer (instrument unspecified)
     if "RH" in df_mis.columns:
-        df_mis["Si_LH_unspecified"] = si_from_rh(df_mis["RH"])
+        df_mis["Si_LH_unspecified"] = mask_si_out_of_range(si_from_rh(df_mis["RH"]))
         df_mis["Si"] = df_mis["Si_LH_unspecified"]
     # Chilled-mirror Si not available in this dataset
     df_mis["Si_chilled_mirror"] = np.nan
